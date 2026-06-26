@@ -1,0 +1,22 @@
+# Backend
+backend/.env
+backend/events.db
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.egg-info/
+backend/.pytest_cache/
+*.pyc
+
+# Frontend
+frontend/.next/
+frontend/node_modules/
+frontend/.env.local
+
+# Playwright MCP session artifacts
+backend/.playwright-mcp/
+
+# Claude Code internals
+.claude/
+
+# General
+.DS_Store
