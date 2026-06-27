@@ -1,9 +1,11 @@
 from app.connectors.base import EventConnector
 from app.connectors.luma import LumaConnector
+from app.connectors.aicamp import AicampConnector
 # from app.connectors.eventbrite import EventbriteConnector  # Phase 2
 
 CONNECTOR_REGISTRY: dict[str, type[EventConnector]] = {
     "luma": LumaConnector,
+    "aicamp": AicampConnector,
     # "eventbrite": EventbriteConnector,  # Phase 2
 }
 

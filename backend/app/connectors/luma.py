@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 LUMA_BASE = "https://lu.ma"
 LUMA_DISCOVER_URL = "https://lu.ma/sf"
 
+# Luma nav and utility paths that appear in snapshot URL lists but are never event pages
 _NON_EVENT_SLUGS = {
     "sf", "discover", "home", "login", "signup", "signin", "settings",
     "people", "user", "pricing", "app", "ai", "help", "calendar",
@@ -65,9 +66,10 @@ class LumaConnector(EventConnector):
 
     async def _collect_event_urls(self, session: ClientSession) -> List[str]:
         await session.call_tool("browser_navigate", {"url": LUMA_DISCOVER_URL})
-        await asyncio.sleep(3)
+        await asyncio.sleep(3)  # Luma is a Next.js SPA — wait for client-side rendering
 
         urls: set[str] = set()
+        # Luma uses infinite scroll; each scroll reveals ~10 more events
         for _ in range(4):
             snapshot = await session.call_tool("browser_snapshot", {})
             text = self._extract_text(snapshot)
@@ -81,7 +83,7 @@ class LumaConnector(EventConnector):
         await session.call_tool("browser_navigate", {"url": url})
         await asyncio.sleep(2)
 
-        # Try structured data via JS first
+        # __NEXT_DATA__ contains Luma's full hydration JSON — structured and reliable when present
         try:
             result = await session.call_tool("browser_evaluate", {
                 "function": "() => JSON.stringify(window.__NEXT_DATA__?.props?.pageProps?.initialData ?? null)"
@@ -94,6 +96,7 @@ class LumaConnector(EventConnector):
         except Exception:
             pass
 
+        # Fallback: parse the MCP accessibility-tree snapshot when __NEXT_DATA__ is absent or incomplete
         snapshot = await session.call_tool("browser_snapshot", {})
         return self._parse_from_snapshot(url, self._extract_text(snapshot))
 
@@ -101,7 +104,7 @@ class LumaConnector(EventConnector):
 
     def _parse_event_urls(self, text: str) -> List[str]:
         urls = []
-        # Snapshot YAML uses "- /url: /slug" for relative links
+        # The MCP snapshot serializes relative links as "- /url: /slug" in YAML — not full https URLs
         for slug in re.findall(r"/url:\s+/([a-zA-Z0-9][a-zA-Z0-9\-]{2,})", text):
             if slug not in _NON_EVENT_SLUGS:
                 urls.append(f"{LUMA_BASE}/{slug}")
@@ -213,7 +216,8 @@ class LumaConnector(EventConnector):
         date_m = re.search(r"\w+day,\s+(\w+ \d{1,2})", text)
         if not date_m:
             return None
-        # Search for a time range like "5:00 PM - 8:00 PM" or plain "5:00 PM" after the date
+        # Slice text from the date match forward — the navbar always shows the current wall-clock time
+        # (e.g. "7:06 PM PDT"), which would be matched first if we searched the full snapshot
         after_date = text[date_m.start():]
         time_m = re.search(r"(\d{1,2}:\d{2} [AP]M)", after_date)
         if not time_m:

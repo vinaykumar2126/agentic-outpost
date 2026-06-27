@@ -70,6 +70,7 @@ def upsert_events(db: Session, raw_events, scrape_run: ScrapeRun) -> None:
             existing.price_max = raw.price_max
             existing.fetched_at = now
             if content_changed:
+                # Title/description changed means the old score is stale — re-rank on next run
                 existing.relevance_score = None
                 existing.relevance_justification = None
                 existing.ranked_at = None
@@ -79,6 +80,7 @@ def upsert_events(db: Session, raw_events, scrape_run: ScrapeRun) -> None:
 
 
 def nightly_scrape_job(source_filter: str | None = None) -> None:
+    # Deferred imports avoid circular import at module load time
     from app.connectors.registry import get_active_connectors
     from app.ranking.event_ranker import EventRanker
 
@@ -94,6 +96,7 @@ def nightly_scrape_job(source_filter: str | None = None) -> None:
             db.commit()
 
             try:
+                # Connectors are async (MCP uses async I/O); APScheduler calls jobs synchronously
                 raw_events = asyncio.run(connector.fetch_events())
                 upsert_events(db, raw_events, run)
 

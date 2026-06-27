@@ -9,7 +9,6 @@ Bay Area AI events aggregator — a personal tool that nightly pulls events from
 **Stack:** FastAPI (Python) backend + Next.js 15 (TypeScript) frontend + SQLite + Anthropic SDK + APScheduler + mcp-playwright.
 
 **Phase 1 source:** Luma (lu.ma) via `@playwright/mcp` — browser automation extracts event data since Luma has no public API.
-**Phase 2 source:** Eventbrite REST API (planned, not yet built).
 
 ## Commands
 

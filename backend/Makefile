@@ -24,3 +24,6 @@ db = SessionLocal(); \
 n = EventRanker().rank_unscored(db); \
 db.close(); \
 print(f'Ranked {n} events')"
+
+
+

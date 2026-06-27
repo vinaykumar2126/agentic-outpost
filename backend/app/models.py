@@ -32,7 +32,9 @@ class Event(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     __table_args__ = (
+        # Dedup key: re-scraping the same event must update, not insert a duplicate row
         UniqueConstraint("source", "external_id", name="uq_source_external_id"),
+        # Covers the two primary query patterns: upcoming events sorted by score, and date-range filters
         Index("ix_start_score", "start_datetime", "relevance_score"),
     )
 
@@ -50,3 +52,4 @@ class ScrapeRun(Base):
     events_ranked: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String, default="running")  # running | success | failed
     error_message: Mapped[str | None] = mapped_column(Text)
+

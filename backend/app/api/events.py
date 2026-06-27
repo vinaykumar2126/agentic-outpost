@@ -28,6 +28,7 @@ def list_events(
     db: Session = Depends(get_db),
 ):
     today = datetime.now(timezone.utc).replace(tzinfo=None).replace(hour=0, minute=0, second=0, microsecond=0)
+    # Default to today so the feed only shows upcoming events unless the caller explicitly requests history
     query = db.query(Event).filter(Event.start_datetime >= (date_from or today))
 
     if date_to:
@@ -51,6 +52,7 @@ def list_events(
     total = query.count()
 
     if sort_by == "score":
+        # nulls_last keeps unranked events below scored ones rather than floating to the top
         query = query.order_by(Event.relevance_score.desc().nulls_last(), Event.start_datetime.asc())
     else:
         query = query.order_by(Event.start_datetime.asc())

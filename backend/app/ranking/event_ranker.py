@@ -10,6 +10,7 @@ from app.models import Event
 
 logger = logging.getLogger(__name__)
 
+# Keeps each prompt within the model's practical context limit while minimizing round-trips
 BATCH_SIZE = 20
 
 SYSTEM_PROMPT = """You are an AI event relevance ranker. You help an early-career software engineer
@@ -30,6 +31,7 @@ Cap the final score at 10.0.
 
 Return ONLY a JSON array — no explanation, no markdown fences."""
 
+# Passed to Ollama's `format` parameter — enforces structured JSON output without regex post-processing
 RANKING_SCHEMA = {
     "type": "array",
     "items": {
@@ -75,7 +77,7 @@ class EventRanker:
                 db.commit()
             except Exception as exc:
                 logger.error("Ranking batch failed: %s", exc)
-                db.rollback()
+                db.rollback()  # isolate failure — a bad batch doesn't block subsequent batches
 
         logger.info("Ranked %d events", ranked_count)
         return ranked_count
