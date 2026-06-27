@@ -1,4 +1,5 @@
 # Backend
+backend/.env.example
 backend/.env
 backend/events.db
 backend/__pycache__/

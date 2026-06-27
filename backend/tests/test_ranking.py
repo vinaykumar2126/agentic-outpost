@@ -66,3 +66,4 @@ def test_rank_ignores_out_of_range_score(db):
     db.refresh(event)
     assert count == 0
     assert event.relevance_score is None
+

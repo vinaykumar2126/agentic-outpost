@@ -82,9 +82,12 @@ def upsert_events(db: Session, raw_events, scrape_run: ScrapeRun) -> None:
 def nightly_scrape_job(source_filter: str | None = None) -> None:
     # Deferred imports avoid circular import at module load time
     from app.connectors.registry import get_active_connectors
+    from app.notifications.email import send_scrape_summary
     from app.ranking.event_ranker import EventRanker
 
     db = SessionLocal()
+    # Capture start time before the loop so we can query events fetched in this run
+    job_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
     try:
         connectors = get_active_connectors()
         if source_filter:
@@ -96,7 +99,7 @@ def nightly_scrape_job(source_filter: str | None = None) -> None:
             db.commit()
 
             try:
-                # Connectors are async (MCP uses async I/O); APScheduler calls jobs synchronously
+                # Connectors are async (MCP uses async I/O); But APScheduler calls jobs synchronously
                 raw_events = asyncio.run(connector.fetch_events())
                 upsert_events(db, raw_events, run)
 
@@ -111,6 +114,8 @@ def nightly_scrape_job(source_filter: str | None = None) -> None:
             finally:
                 run.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 db.commit()
+        # Send digest email after all connectors complete
+        send_scrape_summary(db, job_started_at)
     finally:
         db.close()
 

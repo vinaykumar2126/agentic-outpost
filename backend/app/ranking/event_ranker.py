@@ -22,7 +22,7 @@ Score each event from 0 to 10 using this rubric:
 3–4: Loosely AI-related. Broad data science, analytics, or AI-adjacent content with no engineering depth.
 5–6: Moderately relevant. AI/ML engineering content but not specifically focused on production systems or agentic workflows.
 7–8: Highly relevant. Focuses on LLM engineering, AI infrastructure, production AI deployment, or agent frameworks
-     (LangChain, LlamaIndex, AutoGen, CrewAI, etc.).
+     (LangChain, LangGraph, LlamaIndex, AutoGen, CrewAI, Deepagents, AgentCore etc.).
 9–10: Extremely relevant. Directly covers agentic AI workflows, multi-agent systems in production, AI engineering
       career development, or hands-on agentic AI building sessions.
 
