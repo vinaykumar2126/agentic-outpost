@@ -65,16 +65,16 @@ class LumaConnector(EventConnector):
         return raw_events
 
     async def _collect_event_urls(self, session: ClientSession) -> List[str]:
-        await session.call_tool("browser_navigate", {"url": LUMA_DISCOVER_URL})
+        await session.call_tool("browser_navigate", {"url": LUMA_DISCOVER_URL}) # Navigated to bring the events inside the luma url.
         await asyncio.sleep(3)  # Luma is a Next.js SPA — wait for client-side rendering
 
         urls: set[str] = set()
         # Luma uses infinite scroll; each scroll reveals ~10 more events
         for _ in range(4):
-            snapshot = await session.call_tool("browser_snapshot", {})
+            snapshot = await session.call_tool("browser_snapshot", {}) # Brings the accessibility tree format of the current event page
             text = self._extract_text(snapshot)
             urls.update(self._parse_event_urls(text))
-            await session.call_tool("browser_evaluate", {"function": "() => window.scrollBy(0, 900)"})
+            await session.call_tool("browser_evaluate", {"function": "() => window.scrollBy(0, 900)"}) # Running JS for scrolling to find more events in the same page.
             await asyncio.sleep(2)
 
         return list(urls)
@@ -82,9 +82,11 @@ class LumaConnector(EventConnector):
     async def _scrape_event_detail(self, session: ClientSession, url: str) -> RawEvent | None:
         await session.call_tool("browser_navigate", {"url": url})
         await asyncio.sleep(2)
+        
 
         # __NEXT_DATA__ contains Luma's full hydration JSON — structured and reliable when present
         try:
+            #browser_evaluate - Runs arbitrary JavaScript in the page to scroll.
             result = await session.call_tool("browser_evaluate", {
                 "function": "() => JSON.stringify(window.__NEXT_DATA__?.props?.pageProps?.initialData ?? null)"
             })
@@ -239,7 +241,6 @@ class LumaConnector(EventConnector):
                 if hasattr(block, "text"):
                     return block.text
         return str(tool_result)
-
     @staticmethod
     def _parse_dt(value: str | None) -> datetime | None:
         if not value:

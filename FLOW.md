@@ -106,6 +106,13 @@ LumaConnector.fetch_events()   [backend/app/connectors/luma.py]
 
 Each successfully scraped page → one `RawEvent` object (defined in `backend/app/connectors/base.py`).
 
+<!-- 
+   browser_navigate - Opens a URL in the headless Chromium tab.
+   browser_snapshot - Returns the accessibility tree of the current page as text (not HTML — it's a structured outline of what's visible).
+   browser_evaluate - Runs arbitrary JavaScript in the page and returns the result.
+   browser_scroll_down - (old version) Scrolls the page down(But we're not using it here)
+    -->
+
 ---
 
 ## 4. Upsert into Database
