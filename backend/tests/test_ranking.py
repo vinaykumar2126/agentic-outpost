@@ -20,19 +20,21 @@ def _make_unscored_event(db, external_id="evt1"):
     return event
 
 
-def _mock_ollama_response(external_id: str, score: float):
+def _mock_groq_response(external_id: str, score: float):
     mock_response = MagicMock()
-    mock_response.message.content = json.dumps([
-        {"external_id": external_id, "score": score, "justification": "Highly relevant."}
-    ])
+    mock_response.choices[0].message.content = json.dumps({
+        "rankings": [
+            {"external_id": external_id, "score": score, "justification": "Highly relevant."}
+        ]
+    })
     return mock_response
 
 
 def test_rank_unscored_writes_score(db):
     event = _make_unscored_event(db)
 
-    with patch("app.ranking.event_ranker.ollama.Client") as MockClient:
-        MockClient.return_value.chat.return_value = _mock_ollama_response(event.external_id, 9.0)
+    with patch("app.ranking.event_ranker.Groq") as MockClient:
+        MockClient.return_value.chat.completions.create.return_value = _mock_groq_response(event.external_id, 9.0)
         ranker = EventRanker()
         count = ranker.rank_unscored(db)
 
@@ -47,19 +49,19 @@ def test_rank_skips_already_scored(db):
     event.relevance_score = 7.0
     db.commit()
 
-    with patch("app.ranking.event_ranker.ollama.Client") as MockClient:
+    with patch("app.ranking.event_ranker.Groq") as MockClient:
         ranker = EventRanker()
         count = ranker.rank_unscored(db)
 
-    MockClient.return_value.chat.assert_not_called()
+    MockClient.return_value.chat.completions.create.assert_not_called()
     assert count == 0
 
 
 def test_rank_ignores_out_of_range_score(db):
     event = _make_unscored_event(db)
 
-    with patch("app.ranking.event_ranker.ollama.Client") as MockClient:
-        MockClient.return_value.chat.return_value = _mock_ollama_response(event.external_id, 15.0)
+    with patch("app.ranking.event_ranker.Groq") as MockClient:
+        MockClient.return_value.chat.completions.create.return_value = _mock_groq_response(event.external_id, 15.0)
         ranker = EventRanker()
         count = ranker.rank_unscored(db)
 

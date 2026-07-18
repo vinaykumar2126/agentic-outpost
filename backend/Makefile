@@ -22,8 +22,8 @@ from app.ranking.event_ranker import EventRanker; \
 create_tables(); \
 db = SessionLocal(); \
 n = EventRanker().rank_unscored(db); \
-db.close(); \
-print(f'Ranked {n} events')"
+db.close(); \"
+
 
 
 

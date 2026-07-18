@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Bay Area AI events aggregator — a personal tool that nightly pulls events from Luma (via mcp-playwright), scores them with Claude for relevance to AI engineering / agentic AI roles, and displays them in a filterable Next.js feed.
 
-**Stack:** FastAPI (Python) backend + Next.js 15 (TypeScript) frontend + SQLite + Anthropic SDK + APScheduler + mcp-playwright.
+**Stack:** FastAPI (Python) backend + Next.js 15 (TypeScript) frontend + SQLite + Groq SDK + APScheduler + mcp-playwright.
 
 **Phase 1 source:** Luma (lu.ma) via `@playwright/mcp` — browser automation extracts event data since Luma has no public API.
 
@@ -15,7 +15,7 @@ Bay Area AI events aggregator — a personal tool that nightly pulls events from
 ### Backend
 ```bash
 cd backend
-cp .env.example .env          # fill in EVENTBRITE_API_KEY and ANTHROPIC_API_KEY
+cp .env.example .env          # fill in GROQ_API_KEY
 pip install -r requirements.txt
 pip install -r requirements-dev.txt
 
@@ -37,9 +37,8 @@ npm run lint
 
 ### Prerequisites
 ```bash
-# Ollama (local inference — no API key needed)
-ollama pull qwen2.5       # default model; override with OLLAMA_MODEL in .env
-ollama serve              # if not already running as a background service
+# Groq (hosted inference — free tier). Get a key at https://console.groq.com/keys
+# Set GROQ_API_KEY in backend/.env; override the model with GROQ_MODEL
 
 # MCP playwright (for Luma browser extraction)
 npm install -g @playwright/mcp
@@ -60,7 +59,7 @@ curl http://localhost:8000/api/health
 [APScheduler @ 2am PT]
   → EventConnector.fetch_events()   # pulls from Eventbrite API
   → upsert_events(db, events)       # dedup by (source, external_id)
-  → ClaudeRanker.rank_unscored()    # batches of 20, tool-use structured output
+  → EventRanker.rank_unscored()     # batches of 20, Groq JSON-mode structured output
   → FastAPI GET /api/events         # read-mostly REST API
   → Next.js page.tsx                # SSR + client-side filters
 ```
@@ -80,10 +79,10 @@ Each event source is one file implementing `EventConnector` ABC from `backend/ap
 
 `is_available()` checks that `npx @playwright/mcp --version` exits 0.
 
-### AI ranking (local via Ollama)
-`backend/app/ranking/event_ranker.py` uses the `ollama` Python SDK to call a locally running Ollama instance — no external API, no cost. Structured JSON output is enforced via Ollama's `format` schema parameter. Batch size 20. Events with `relevance_score IS NULL` are selected each run; events whose title/description changed since last rank get reset to NULL automatically during upsert.
+### AI ranking (hosted via Groq)
+`backend/app/ranking/event_ranker.py` uses the `groq` Python SDK to call Groq's OpenAI-compatible chat completions API (free tier). Structured JSON output is enforced via `response_format={"type": "json_object"}`; the model returns `{"rankings": [...]}`. Batch size 20. Events with `relevance_score IS NULL` are selected each run; events whose title/description changed since last rank get reset to NULL automatically during upsert.
 
-Model and endpoint are configurable via env vars: `OLLAMA_MODEL` (default `llama3.1`) and `OLLAMA_BASE_URL` (default `http://localhost:11434`).
+Model is configurable via `GROQ_MODEL` (default `llama-3.3-70b-versatile`); the key comes from `GROQ_API_KEY`.
 
 Scoring rubric (baked into system prompt):
 - 9–10: Agentic AI workflows / multi-agent systems in production / AI engineering career events
@@ -102,4 +101,4 @@ SQLite via SQLAlchemy ORM. Swap to Postgres by changing `DATABASE_URL` env var o
 
 ## Environment Variables
 
-All in `backend/.env` (never committed). Required: `EVENTBRITE_API_KEY`, `ANTHROPIC_API_KEY`. Optional: `DATABASE_URL` (default `sqlite:///./events.db`), `SCRAPE_DAYS_AHEAD` (default `60`), `LOG_LEVEL` (default `INFO`).
+All in `backend/.env` (never committed). Required: `GROQ_API_KEY`. Optional: `GROQ_MODEL` (default `llama-3.3-70b-versatile`), `DATABASE_URL` (default `sqlite:///./events.db`), `SCRAPE_DAYS_AHEAD` (default `60`), `LOG_LEVEL` (default `INFO`).

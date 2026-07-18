@@ -10,7 +10,7 @@ from app.models import Event
 
 logger = logging.getLogger(__name__)
 
-_TO = "godavartivinaykumar@gmail.com"
+_TO = "gvk.kumar100@gmail.com"
 _MIN_SCORE = 5.0
 
 

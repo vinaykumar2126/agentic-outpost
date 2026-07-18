@@ -1,6 +1,6 @@
 # SOURCES.md
 
-## Add more features
+## Add feature 1
  ** Add a new event connector for aicamp.ai that scrapes events using the existing MCP Playwright setup — the same pattern as LumaConnector in luma.py. The connector should:
 
     - Navigate to https://www.aicamp.ai/ and discover event listing pages
@@ -20,5 +20,7 @@
     Be triggered at the end of nightly_scrape_job() in jobs.py, after ranking completes
     I've the gmail mcp server you can check it out
 
+## Add feature 2
 
-If you get any doubt pls look at CLAUDE.md and FLOW.md from the root of the project. If you still have any questions pls fell free to ask me.
+
+- If you get any doubt pls look at CLAUDE.md and FLOW.md from the root of the project. If you still have any questions pls fell free to ask me.

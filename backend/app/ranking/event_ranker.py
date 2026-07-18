@@ -2,7 +2,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-import ollama
+from groq import Groq
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -29,26 +29,14 @@ Score each event from 0 to 10 using this rubric:
 Add 0.5–1.0 to the score if the event explicitly enables 1:1 networking with AI engineers or hiring managers.
 Cap the final score at 10.0.
 
-Return ONLY a JSON array — no explanation, no markdown fences."""
-
-# Passed to Ollama's `format` parameter — enforces structured JSON output without regex post-processing
-RANKING_SCHEMA = {
-    "type": "array",
-    "items": {
-        "type": "object",
-        "properties": {
-            "external_id": {"type": "string"},
-            "score": {"type": "number"},
-            "justification": {"type": "string"},
-        },
-        "required": ["external_id", "score", "justification"],
-    },
-}
+Return ONLY a JSON object of the form {"rankings": [...]}, where each array item has the keys
+"external_id" (string), "score" (number 0–10), and "justification" (plain text, max 20 words).
+No explanation, no markdown fences."""
 
 
 class EventRanker:
     def __init__(self):
-        self.client = ollama.Client(host=settings.ollama_base_url)
+        self.client = Groq(api_key=settings.groq_api_key)
 
     def rank_unscored(self, db: Session) -> int:
         """Score all events with relevance_score IS NULL. Returns number of events ranked."""
@@ -96,17 +84,20 @@ class EventRanker:
 
         user_prompt = (
             f"Rank the following {len(events)} events. "
-            "Each justification must be plain text, max 20 words.\n\n"
+            "Each justification must be plain text, max 20 words. "
+            'Respond with a JSON object of the form {"rankings": [...]}.\n\n'
             f"Events:\n{json.dumps(payload, indent=2)}"
         )
 
-        response = self.client.chat(
-            model=settings.ollama_model,
+        response = self.client.chat.completions.create(
+            model=settings.groq_model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            format=RANKING_SCHEMA,
+            temperature=0,
+            response_format={"type": "json_object"},  # enforces valid JSON without regex post-processing
         )
 
-        return json.loads(response.message.content)
+        content = json.loads(response.choices[0].message.content)
+        return content.get("rankings", [])

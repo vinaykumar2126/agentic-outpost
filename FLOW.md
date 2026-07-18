@@ -139,7 +139,7 @@ The `UNIQUE(source, external_id)` constraint is the dedup key — the same event
 
 ---
 
-## 5. AI Relevance Ranking (Ollama)
+## 5. AI Relevance Ranking (Groq)
 
 ```
 EventRanker.rank_unscored(db)   [backend/app/ranking/event_ranker.py]
@@ -151,10 +151,10 @@ EventRanker.rank_unscored(db)   [backend/app/ranking/event_ranker.py]
                     │
                     ├─► Build JSON payload: [{external_id, title, description, organizer, tags}]
                     │
-                    ├─► ollama.Client.chat()
-                    │       model: qwen2.5  (configured in .env)
+                    ├─► Groq().chat.completions.create()
+                    │       model: llama-3.3-70b-versatile  (configured in .env)
                     │       system prompt: scoring rubric (0–10 scale)
-                    │       format: RANKING_SCHEMA  ← forces valid JSON output
+                    │       response_format: {"type": "json_object"}  ← forces valid JSON output
                     │
                     └─► Parse response → [{external_id, score, justification}]
 
@@ -243,7 +243,7 @@ FilterBar.tsx  [frontend/components/FilterBar.tsx]  ← "use client"
 | Change what the card shows | `frontend/components/EventCard.tsx` |
 | Add a filter to the UI | `frontend/components/FilterBar.tsx` |
 | Swap SQLite → Postgres | `DATABASE_URL=postgresql://...` in `backend/.env` — no code changes |
-| Change Ollama model | `OLLAMA_MODEL=<model>` in `backend/.env` |
+| Change Groq model | `GROQ_MODEL=<model>` in `backend/.env` |
 
 ---
 
@@ -255,8 +255,7 @@ backend/events.db     ← SQLite database (never committed)
 backend/.env.example  ← template showing all available variables
 ```
 
-Required env vars: none (everything has defaults). Optional overrides:
-- `OLLAMA_MODEL` (default: `qwen2.5`)
-- `OLLAMA_BASE_URL` (default: `http://localhost:11434`)
+Required env vars: `GROQ_API_KEY` (for ranking). Optional overrides:
+- `GROQ_MODEL` (default: `llama-3.3-70b-versatile`)
 - `DATABASE_URL` (default: `sqlite:///./events.db`)
 - `SCRAPE_DAYS_AHEAD` (default: `60`)
