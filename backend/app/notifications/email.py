@@ -15,8 +15,8 @@ _MIN_SCORE = 5.0
 
 
 def send_scrape_summary(db: Session, job_started_at: datetime) -> None:
-    """Send a digest email of high-scoring events fetched in this scrape run.
-    Skips silently if no events scored >= 7, or if Gmail credentials are not configured.
+    """Send a digest email of newly-discovered high-scoring events from this scrape run.
+    Skips silently if no new events scored >= _MIN_SCORE, or if Gmail creds are not configured.
     Never raises — email failure must not affect the scrape run status.
     """
     if not settings.gmail_user or not settings.gmail_app_password:
@@ -26,8 +26,10 @@ def send_scrape_summary(db: Session, job_started_at: datetime) -> None:
     try:
         events = (
             db.query(Event)
+            # created_at is set once on insert and never bumped on re-fetch (unlike
+            # fetched_at), so this matches only events first discovered in this run.
             .filter(
-                Event.fetched_at >= job_started_at,
+                Event.created_at >= job_started_at,
                 Event.relevance_score >= _MIN_SCORE,
             )
             .order_by(Event.relevance_score.desc())
