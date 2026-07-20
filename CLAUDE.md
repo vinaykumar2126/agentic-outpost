@@ -65,7 +65,7 @@ curl http://localhost:8000/api/health
 ```
 
 ### Connector plugin pattern
-Each event source is one file implementing `EventConnector` ABC from `backend/app/connectors/base.py`. Adding a new source = create one file + uncomment one line in `backend/app/connectors/registry.py`. The scheduler, ranker, API, and frontend require zero changes.
+Each event source is one file implementing `EventConnector` ABC from `backend/app/connectors/base.py`. Adding a new source = create one file + one line in `backend/app/connectors/registry.py`. The scheduler, ranker, API, and frontend require zero changes. Active sources: `luma`, `aicamp`, `reddit` (registry order matters — reddit runs last so its cross-source dedup sees what luma/aicamp just inserted).
 
 `is_available()` on each connector checks prerequisites (credentials, MCP server availability) — missing deps skip that connector gracefully at startup.
 
@@ -78,6 +78,9 @@ Each event source is one file implementing `EventConnector` ABC from `backend/ap
 5. For each event URL, navigates to the detail page and extracts description + location
 
 `is_available()` checks that `npx @playwright/mcp --version` exits 0.
+
+### Reddit connector (public RSS feeds)
+`backend/app/connectors/reddit.py` discovers community/word-of-mouth events via Reddit's public Atom feeds (`/r/<sub>/search.rss`, `hot.rss`, `<post>/.rss`) — no credentials needed. (Reddit's Data API now requires per-use-case approval under the Nov 2025 Responsible Builder Policy; RSS remains an intentionally public syndication surface and includes full post bodies + exact ISO timestamps.) Rate discipline: descriptive User-Agent, 7s between fetches (~10 req/min unauthenticated limit), 429 backoff honoring Retry-After — the 2am cron doesn't care that the run takes a few minutes. Pipeline: narrow search feeds (6 subreddits × OR-combined queries, sort=new/t=week) + megathread comments → `trim_post()` code-level field projection → one recall-biased Groq JSON extraction pass → lu.ma out-links enriched via the existing Playwright scraper → cross-source dedup (resolved URL, fallback normalized title+date) → `RawEvent` with `source="reddit"`. Raw feed XML is audited to `.agent/scratch/reddit_raw/`, never held in LLM context.
 
 ### AI ranking (hosted via Groq)
 `backend/app/ranking/event_ranker.py` uses the `groq` Python SDK to call Groq's OpenAI-compatible chat completions API (free tier). Structured JSON output is enforced via `response_format={"type": "json_object"}`; the model returns `{"rankings": [...]}`. Batch size 20. Events with `relevance_score IS NULL` are selected each run; events whose title/description changed since last rank get reset to NULL automatically during upsert.

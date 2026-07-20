@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timezone
 
 from groq import Groq
+from langsmith import traceable
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -36,8 +37,12 @@ No explanation, no markdown fences."""
 
 class EventRanker:
     def __init__(self):
+        # wrap_openai can't be used here — it also patches the legacy .completions
+        # endpoint, which the Groq client doesn't expose. The @traceable decorators
+        # below capture the calls instead (see _rank_batch).
         self.client = Groq(api_key=settings.groq_api_key)
 
+    @traceable(name="rank_unscored")
     def rank_unscored(self, db: Session) -> int:
         """Score all events with relevance_score IS NULL. Returns number of events ranked."""
         unscored = db.query(Event).filter(Event.relevance_score.is_(None)).all()
@@ -70,6 +75,7 @@ class EventRanker:
         logger.info("Ranked %d events", ranked_count)
         return ranked_count
 
+    @traceable(name="rank_batch", run_type="llm")
     def _rank_batch(self, events: list[Event]) -> list[dict]:
         payload = [
             {

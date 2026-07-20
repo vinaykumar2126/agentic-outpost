@@ -66,9 +66,11 @@ def _format_body(events: list[Event]) -> str:
 
     for e in events:
         date_str = e.start_datetime.strftime("%b %d, %Y  %I:%M %p") if e.start_datetime else "TBD"
+        # Community finds from Reddit are marked so they stand out from Luma/AIcamp listings
+        source_tag = "  🔎 community find (Reddit)" if e.source == "reddit" else ""
         lines += [
             divider,
-            f"[{e.relevance_score:.1f}]  {e.title}",
+            f"[{e.relevance_score:.1f}]  {e.title}{source_tag}",
             f"Date:       {date_str}",
             f"Location:   {e.location_name or '—'}",
             f"Organizer:  {e.organizer_name or '—'}",

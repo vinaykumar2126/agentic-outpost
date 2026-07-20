@@ -66,3 +66,4 @@ class HealthResponse(BaseModel):
     db: str
     scheduler: str
     next_run: Optional[str]
+
