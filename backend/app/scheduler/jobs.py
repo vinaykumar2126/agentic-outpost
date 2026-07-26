@@ -93,10 +93,12 @@ def nightly_scrape_job(source_filter: str | None = None) -> None:
         if source_filter:
             connectors = [c for c in connectors if c.source_name == source_filter]
 
+        runs = []
         for connector in connectors:
             run = ScrapeRun(source=connector.source_name, status="running")
             db.add(run)
             db.commit()
+            runs.append(run)
 
             try:
                 # Connectors are async (MCP uses async I/O); But APScheduler calls jobs synchronously
@@ -107,6 +109,13 @@ def nightly_scrape_job(source_filter: str | None = None) -> None:
                 run.events_ranked = ranker.rank_unscored(db)
 
                 run.status = "success"
+                logger.info(
+                    "%s: fetched %d events (%d new, %d updated)",
+                    connector.source_name,
+                    run.events_fetched,
+                    run.events_new,
+                    run.events_updated,
+                )
             except Exception as exc:
                 logger.error("Scrape failed for %s: %s", connector.source_name, exc)
                 run.status = "failed"
@@ -115,7 +124,7 @@ def nightly_scrape_job(source_filter: str | None = None) -> None:
                 run.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 db.commit()
         # Send digest email after all connectors complete
-        send_scrape_summary(db, job_started_at)
+        send_scrape_summary(db, job_started_at, runs)
     finally:
         db.close()
 

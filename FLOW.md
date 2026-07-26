@@ -125,7 +125,8 @@ before anything reaches the LLM; raw blobs go to disk, not context.
 RedditConnector.fetch_events()   [backend/app/connectors/reddit.py]
         │
         ├─► RETRIEVE   via Reddit's public RSS/Atom feeds (no credentials; Data API now
-        │              needs approval, RSS doesn't). 7s between fetches + 429 backoff.
+        │              needs approval, RSS doesn't). 10s between fetches, 429 backoff
+        │              (Retry-After or 61s/122s), adaptive slowdown after exhausted 429s.
         │       /r/<sub>/search.rss: 6 subreddits × 2 OR-combined queries, sort=new, t=week
         │       /r/<sub>/hot.rss: find "events / what's happening" megathreads
         │       <post>/.rss: megathread comments (full bodies, exact ISO timestamps)

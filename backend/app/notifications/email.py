@@ -6,7 +6,7 @@ from email.mime.text import MIMEText
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import Event
+from app.models import Event, ScrapeRun
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,9 @@ _TO = "gvk.kumar100@gmail.com"
 _MIN_SCORE = 5.0
 
 
-def send_scrape_summary(db: Session, job_started_at: datetime) -> None:
+def send_scrape_summary(
+    db: Session, job_started_at: datetime, runs: list[ScrapeRun] | None = None
+) -> None:
     """Send a digest email of newly-discovered high-scoring events from this scrape run.
     Skips silently if no new events scored >= _MIN_SCORE, or if Gmail creds are not configured.
     Never raises — email failure must not affect the scrape run status.
@@ -40,7 +42,7 @@ def send_scrape_summary(db: Session, job_started_at: datetime) -> None:
             logger.info("No events scored >= %.1f in this run — skipping email", _MIN_SCORE)
             return
 
-        body = _format_body(events)
+        body = _format_body(events, runs)
         subject = f"Bay Area AI Events — {len(events)} new event{'s' if len(events) != 1 else ''} worth checking out"
 
         msg = MIMEText(body, "plain")
@@ -58,7 +60,7 @@ def send_scrape_summary(db: Session, job_started_at: datetime) -> None:
         logger.error("Failed to send scrape summary email: %s", exc)
 
 
-def _format_body(events: list[Event]) -> str:
+def _format_body(events: list[Event], runs: list[ScrapeRun] | None = None) -> str:
     divider = "─" * 50
     lines = [
         f"Found {len(events)} event{'s' if len(events) != 1 else ''} scored {_MIN_SCORE}+ from tonight's scrape:\n"
@@ -67,10 +69,11 @@ def _format_body(events: list[Event]) -> str:
     for e in events:
         date_str = e.start_datetime.strftime("%b %d, %Y  %I:%M %p") if e.start_datetime else "TBD"
         # Community finds from Reddit are marked so they stand out from Luma/AIcamp listings
-        source_tag = "  🔎 community find (Reddit)" if e.source == "reddit" else ""
+        source_tag = " — 🔎 community find" if e.source == "reddit" else ""
         lines += [
             divider,
-            f"[{e.relevance_score:.1f}]  {e.title}{source_tag}",
+            f"[{e.relevance_score:.1f}]  {e.title}",
+            f"Source:     {e.source}{source_tag}",
             f"Date:       {date_str}",
             f"Location:   {e.location_name or '—'}",
             f"Organizer:  {e.organizer_name or '—'}",
@@ -81,5 +84,17 @@ def _format_body(events: list[Event]) -> str:
         lines.append("")
 
     lines.append(divider)
+
+    if runs:
+        lines.append("\nScrape summary:")
+        for run in runs:
+            if run.status == "failed":
+                lines.append(f"  {run.source}: FAILED — {run.error_message}")
+            else:
+                lines.append(
+                    f"  {run.source}: {run.events_fetched} fetched"
+                    f" ({run.events_new} new, {run.events_updated} updated)"
+                )
+
     lines.append("\nHappy networking! 🤖")
     return "\n".join(lines)

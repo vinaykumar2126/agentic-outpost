@@ -26,6 +26,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -41,6 +42,7 @@ from mcp.client.stdio import stdio_client
 
 from app.config import settings
 from app.connectors.base import EventConnector, RawEvent
+from app.llm import chunk_by_chars, groq_json_chat
 
 logger = logging.getLogger(__name__)
 
@@ -50,18 +52,31 @@ _ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
 REDDIT_BASE = "https://www.reddit.com"
 # Reddit UA convention: <platform>:<app id>:<version> (purpose)
 USER_AGENT = "macos:events-finder:v1.0 (personal Bay Area AI events aggregator, read-only RSS)"
-# Unauthenticated RSS is limited to ~10 req/min; this runs from a 2am cron where
-# a few slow minutes cost nothing, so stay comfortably under the limit.
-_REQUEST_DELAY_S = 7.0
+# Unauthenticated RSS is limited to ~10 req/min with burst accounting over a longer
+# window (repeated dev runs from the same IP drain the same bucket). This runs from a
+# 2am cron where slow minutes cost nothing, so stay comfortably under the limit and
+# back off hard when throttled.
+_REQUEST_DELAY_S = 10.0
 _MAX_RETRIES_429 = 2
+_429_FALLBACK_BACKOFF_S = 61.0   # when Reddit sends no Retry-After header
+_429_PENALTY_STEP_S = 30.0       # added to the inter-request delay after an exhausted 429
 
-SUBREDDITS = ["sanfrancisco", "bayarea", "sanfranciscobayarea", "SFtech", "LocalLLaMA", "artificial"]
+# r/SFtech is private — Reddit returns HTTP 403 for it on every surface, so it's dropped.
+GENERAL_SUBREDDITS = ["sanfrancisco", "bayarea", "sanfranciscobayarea"]
+
+# AI-niche subs: generic terms like "agents OR LLM" match the entire subreddit there,
+# flooding retrieval (and the LLM token budget) with non-event posts. Anchor on location
+# instead — in r/LocalLLaMA, a post mentioning SF is almost always a meetup announcement.
+NICHE_SUBREDDITS = ["LocalLLaMA", "artificial"]
+
+SUBREDDITS = GENERAL_SUBREDDITS + NICHE_SUBREDDITS  # megathread scan covers all
 
 # OR-combined so 8 spec queries cost 2 feed fetches per subreddit instead of 8
 SEARCH_QUERIES = [
     '"AI meetup" OR "AI event" OR hackathon OR "demo night"',
     'agents OR LLM OR "build night" OR coworking',
 ]
+NICHE_QUERIES = ['"San Francisco" OR "Bay Area" OR "SF meetup" OR "SF event"']
 
 _MEGATHREAD_RE = re.compile(r"\b(events?|happening|weekly|monthly|what'?s on)\b", re.IGNORECASE)
 
@@ -77,6 +92,11 @@ _MAX_CANDIDATES = 30       # cap on posts that reach the LLM
 _MAX_MEGATHREADS = 4
 _MAX_COMMENT_CANDIDATES = 20
 _BODY_CAP = 1500           # per-post body cap before the LLM sees it
+
+# Groq free tier is TPM-limited (6k/min for llama-3.3-70b). ~9k chars ≈ 2.5k tokens
+# per call keeps each request well under budget; the gap spreads calls across minutes.
+_EXTRACT_CHAR_BUDGET = 9000
+_LLM_CALL_GAP_S = 25.0
 
 # Raw feed XML goes here for audit — never into LLM context
 RAW_DUMP_DIR = Path(__file__).resolve().parents[3] / ".agent" / "scratch" / "reddit_raw"
@@ -297,8 +317,10 @@ class RedditConnector(EventConnector):
             headers={"User-Agent": USER_AGENT}, timeout=15, follow_redirects=True
         ) as client:
             # 1a. Narrow keyword search per subreddit — search IS the first filter
-            for sub in SUBREDDITS:
-                for qi, query in enumerate(SEARCH_QUERIES):
+            sub_queries = [(s, SEARCH_QUERIES) for s in GENERAL_SUBREDDITS] + \
+                          [(s, NICHE_QUERIES) for s in NICHE_SUBREDDITS]
+            for sub, queries in sub_queries:
+                for qi, query in enumerate(queries):
                     url = (f"{REDDIT_BASE}/r/{sub}/search.rss"
                            f"?q={quote(query)}&restrict_sr=on&sort=new&t=week&limit=25")
                     xml_text = await self._fetch(client, url, f"search_{sub}_q{qi}")
@@ -320,7 +342,9 @@ class RedditConnector(EventConnector):
     async def _collect_megathread_comments(self, client: httpx.AsyncClient,
                                            known_ids: set[str]) -> List[dict]:
         threads: List[dict] = []
-        for sub in SUBREDDITS:
+        # "What's happening" megathreads live in the city subs, not the AI-niche ones —
+        # skipping the niche subs here saves requests from the rate-limit bucket
+        for sub in GENERAL_SUBREDDITS:
             xml_text = await self._fetch(client, f"{REDDIT_BASE}/r/{sub}/hot.rss?limit=10",
                                          f"hot_{sub}")
             threads += [c for c in parse_feed(xml_text)
@@ -337,8 +361,9 @@ class RedditConnector(EventConnector):
 
     async def _fetch(self, client: httpx.AsyncClient, url: str, dump_name: str) -> str:
         """One polite feed fetch with 429 backoff; failures degrade to an empty feed,
-        never abort the run."""
-        await asyncio.sleep(_REQUEST_DELAY_S)
+        never abort the run. Exhausted 429s permanently slow the rest of the run
+        (adaptive penalty) — the bucket is clearly drained, so stop hammering it."""
+        await asyncio.sleep(_REQUEST_DELAY_S + getattr(self, "_delay_penalty_s", 0.0))
         for attempt in range(_MAX_RETRIES_429 + 1):
             try:
                 resp = await client.get(url)
@@ -350,11 +375,17 @@ class RedditConnector(EventConnector):
                 return resp.text
             if resp.status_code == 429 and attempt < _MAX_RETRIES_429:
                 # Respect Retry-After when Reddit sends it; otherwise back off hard
-                retry_after = float(resp.headers.get("retry-after") or 30 * (attempt + 1))
+                retry_after = float(resp.headers.get("retry-after")
+                                    or _429_FALLBACK_BACKOFF_S * (attempt + 1))
                 logger.info("429 on %s — backing off %.0fs", url, retry_after)
                 await asyncio.sleep(retry_after)
                 continue
-            logger.warning("Feed fetch %s -> HTTP %d", url, resp.status_code)
+            if resp.status_code == 429:
+                self._delay_penalty_s = getattr(self, "_delay_penalty_s", 0.0) + _429_PENALTY_STEP_S
+                logger.warning("Feed fetch %s -> HTTP 429 after retries; slowing rest of run "
+                               "(+%.0fs/request)", url, self._delay_penalty_s)
+            else:
+                logger.warning("Feed fetch %s -> HTTP %d", url, resp.status_code)
             return ""
         return ""
 
@@ -377,23 +408,32 @@ class RedditConnector(EventConnector):
                 "links_in_post": t["out_links"],
             })
 
-        user_prompt = (
-            f"Today is {datetime.now(PACIFIC).strftime('%A %Y-%m-%d')}. "
-            f"Extract events from these {len(payload)} Reddit posts.\n\n"
-            f"{json.dumps(payload, indent=1)}"
-        )
         client = Groq(api_key=settings.groq_api_key)
-        response = client.chat.completions.create(
-            model=settings.groq_model,
-            messages=[
-                {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0,
-            response_format={"type": "json_object"},
-        )
-        content = json.loads(response.choices[0].message.content)
-        return content.get("events", [])
+        today = datetime.now(PACIFIC).strftime("%A %Y-%m-%d")
+        events: List[dict] = []
+        # Chunked so each request stays far below Groq's TPM budget
+        batches = chunk_by_chars(payload, _EXTRACT_CHAR_BUDGET)
+        for i, batch in enumerate(batches):
+            if i:
+                time.sleep(_LLM_CALL_GAP_S)
+            user_prompt = (
+                f"Today is {today}. "
+                f"Extract events from these {len(batch)} Reddit posts.\n\n"
+                f"{json.dumps(batch, indent=1)}"
+            )
+            try:
+                content = groq_json_chat(
+                    client,
+                    model=settings.groq_model,
+                    messages=[
+                        {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                )
+                events += json.loads(content).get("events", [])
+            except Exception as exc:
+                logger.error("Extraction batch %d/%d failed: %s", i + 1, len(batches), exc)
+        return events
 
     # ── Stages 4-5: resolve, dedup, enrich, assemble ─────────────────────────
 
