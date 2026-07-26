@@ -21,3 +21,7 @@ backend/.playwright-mcp/
 
 # General
 .DS_Store
+
+#  Root
+langgraph.json
+

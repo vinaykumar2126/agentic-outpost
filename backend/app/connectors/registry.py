@@ -1,11 +1,15 @@
 from app.connectors.base import EventConnector
 from app.connectors.luma import LumaConnector
 from app.connectors.aicamp import AicampConnector
+from app.connectors.reddit import RedditConnector
 # from app.connectors.eventbrite import EventbriteConnector  # Phase 2
 
+# Order matters: reddit runs last so its cross-source dedup sees events that
+# luma/aicamp inserted earlier in the same nightly run.
 CONNECTOR_REGISTRY: dict[str, type[EventConnector]] = {
     "luma": LumaConnector,
     "aicamp": AicampConnector,
+    "reddit": RedditConnector,
     # "eventbrite": EventbriteConnector,  # Phase 2
 }
 

@@ -1,17 +1,22 @@
 import json
 import logging
+import time
 from datetime import datetime, timezone
 
 from groq import Groq
+from langsmith import traceable
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.llm import groq_json_chat
 from app.models import Event
 
 logger = logging.getLogger(__name__)
 
 # Keeps each prompt within the model's practical context limit while minimizing round-trips
 BATCH_SIZE = 20
+# Spread batches out so consecutive calls don't blow Groq's free-tier TPM budget
+_INTER_BATCH_GAP_S = 20.0
 
 SYSTEM_PROMPT = """You are an AI event relevance ranker. You help an early-career software engineer
 targeting AI Engineer roles discover the most valuable Bay Area AI events for networking and career growth.
@@ -36,8 +41,12 @@ No explanation, no markdown fences."""
 
 class EventRanker:
     def __init__(self):
+        # wrap_openai can't be used here — it also patches the legacy .completions
+        # endpoint, which the Groq client doesn't expose. The @traceable decorators
+        # below capture the calls instead (see _rank_batch).
         self.client = Groq(api_key=settings.groq_api_key)
 
+    @traceable(name="rank_unscored")
     def rank_unscored(self, db: Session) -> int:
         """Score all events with relevance_score IS NULL. Returns number of events ranked."""
         unscored = db.query(Event).filter(Event.relevance_score.is_(None)).all()
@@ -48,6 +57,8 @@ class EventRanker:
         ranked_count = 0
         for i in range(0, len(unscored), BATCH_SIZE):
             batch = unscored[i : i + BATCH_SIZE]
+            if i:
+                time.sleep(_INTER_BATCH_GAP_S)
             try:
                 results = self._rank_batch(batch)
                 for item in results:
@@ -70,6 +81,7 @@ class EventRanker:
         logger.info("Ranked %d events", ranked_count)
         return ranked_count
 
+    @traceable(name="rank_batch", run_type="llm")
     def _rank_batch(self, events: list[Event]) -> list[dict]:
         payload = [
             {
@@ -89,15 +101,13 @@ class EventRanker:
             f"Events:\n{json.dumps(payload, indent=2)}"
         )
 
-        response = self.client.chat.completions.create(
+        # groq_json_chat enforces JSON output and retries TPM 429s with Groq's suggested wait
+        content = groq_json_chat(
+            self.client,
             model=settings.groq_model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0,
-            response_format={"type": "json_object"},  # enforces valid JSON without regex post-processing
         )
-
-        content = json.loads(response.choices[0].message.content)
-        return content.get("rankings", [])
+        return json.loads(content).get("rankings", [])

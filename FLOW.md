@@ -45,7 +45,8 @@ nightly_scrape_job()           [backend/app/scheduler/jobs.py]
         ├─► get_active_connectors()    [backend/app/connectors/registry.py]
         │       Loops CONNECTOR_REGISTRY, calls is_available() on each
         │       Skips connectors whose dependencies are missing (no crash)
-        │       Currently active: LumaConnector
+        │       Registered: LumaConnector, AicampConnector, RedditConnector
+        │       (reddit last — its cross-source dedup sees what luma/aicamp inserted)
         │
         └─► For each connector:
                 │
@@ -114,6 +115,40 @@ Each successfully scraped page → one `RawEvent` object (defined in `backend/ap
     -->
 
 ---
+
+## 3b. Reddit Community-Event Discovery (inside `fetch_events`)
+
+Reddit surfaces word-of-mouth events Luma/AIcamp miss. Token-disciplined: search narrows
+before anything reaches the LLM; raw blobs go to disk, not context.
+
+```
+RedditConnector.fetch_events()   [backend/app/connectors/reddit.py]
+        │
+        ├─► RETRIEVE   via Reddit's public RSS/Atom feeds (no credentials; Data API now
+        │              needs approval, RSS doesn't). 10s between fetches, 429 backoff
+        │              (Retry-After or 61s/122s), adaptive slowdown after exhausted 429s.
+        │       /r/<sub>/search.rss: 6 subreddits × 2 OR-combined queries, sort=new, t=week
+        │       /r/<sub>/hot.rss: find "events / what's happening" megathreads
+        │       <post>/.rss: megathread comments (full bodies, exact ISO timestamps)
+        │       raw XML → .agent/scratch/reddit_raw/  (audit trail, never in LLM context)
+        │
+        ├─► TRIM       trim_post(): code-level projection to {sub,title,body≤1500,url,created_utc,out_links}
+        │
+        ├─► EXTRACT    one Groq JSON call, recall-biased (no keyword gate; confidence field instead)
+        │       created_utc passed per post → resolves "this Saturday" correctly
+        │       → {name, date_iso, location, organizer, is_ai_relevant, confidence, source_url, post_url}
+        │
+        ├─► FILTER     drop: is_ai_relevant=false, unparseable/absent dates, past or >days_ahead
+        │
+        ├─► DEDUP      vs existing DB rows (cross-posted Luma events): resolved URL,
+        │              fallback normalized (title+date); plus intra-batch dedup
+        │
+        └─► ENRICH     lu.ma out_links → existing Playwright scraper for structured details
+                       → RawEvent(source="reddit", tags += ["community","via-reddit"])
+```
+
+Precision is recovered downstream by the existing ranking gate — the email only shows
+high-scoring events, so recall-biased extraction here is safe.
 
 ## 4. Upsert into Database
 
@@ -255,7 +290,7 @@ backend/events.db     ← SQLite database (never committed)
 backend/.env.example  ← template showing all available variables
 ```
 
-Required env vars: `GROQ_API_KEY` (for ranking). Optional overrides:
+Required env vars: `GROQ_API_KEY` (for ranking + Reddit event extraction). The Reddit connector needs no credentials (public RSS). Optional overrides:
 - `GROQ_MODEL` (default: `llama-3.3-70b-versatile`)
 - `DATABASE_URL` (default: `sqlite:///./events.db`)
 - `SCRAPE_DAYS_AHEAD` (default: `60`)
