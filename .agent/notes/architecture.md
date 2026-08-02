@@ -86,7 +86,7 @@ Only Stage 1 (RETRIEVE) changed; trim/extract/enrich/dedup untouched. No Reddit 
 - Anonymous mode → HTTP 403 on every endpoint (verified live). Read-only OAuth via
   REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET (free "script" app at reddit.com/prefs/apps). No password needed.
 - Full tool schemas dumped to .agent/scratch/reddit_mcp_tools.json. The ones we use:
-  - search_reddit(query, subreddit?, sort[relevance|hot|top|new|comments], time_filter[hour..all], limit 1-100, type[link|sr|user], after?)
+  - search_reddit(query, subreddit?, sort[relevance|hot|top|new|comments], time_filter[hour..all], limit 1-100, type[link|sr|user], after?) 
   - get_reddit_post(subreddit, post_id)
   - browse_subreddit(subreddit?, sort?, time_filter?, limit?, after?)
   - get_post_comments(post_id, subreddit, sort?, limit?)

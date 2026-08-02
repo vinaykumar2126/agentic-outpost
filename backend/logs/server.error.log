@@ -34,3 +34,5 @@ WARNING:apscheduler.executors.default:Run time of job "nightly_scrape_job (trigg
 WARNING:apscheduler.executors.default:Run time of job "nightly_scrape_job (trigger: cron[hour='2', minute='0'], next run at: 2026-07-22 02:00:00 PDT)" was missed by 19:27:10.827700
 WARNING:apscheduler.executors.default:Run time of job "nightly_scrape_job (trigger: cron[hour='2', minute='0'], next run at: 2026-07-24 02:00:00 PDT)" was missed by 19:42:43.590313
 WARNING:apscheduler.executors.default:Run time of job "nightly_scrape_job (trigger: cron[hour='2', minute='0'], next run at: 2026-07-26 02:00:00 PDT)" was missed by 7:50:17.980027
+WARNING:apscheduler.executors.default:Run time of job "nightly_scrape_job (trigger: cron[hour='2', minute='0'], next run at: 2026-07-27 02:00:00 PDT)" was missed by 21:14:50.317809
+WARNING:apscheduler.executors.default:Run time of job "nightly_scrape_job (trigger: cron[hour='2', minute='0'], next run at: 2026-07-28 02:00:00 PDT)" was missed by 0:00:12.711333
