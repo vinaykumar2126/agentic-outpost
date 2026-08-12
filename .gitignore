@@ -7,7 +7,7 @@ backend/**/__pycache__/
 backend/*.egg-info/
 backend/.pytest_cache/
 *.pyc
-
+.agent/
 # Frontend
 frontend/.next/
 frontend/node_modules/

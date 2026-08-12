@@ -111,3 +111,4 @@ class EventRanker:
             ],
         )
         return json.loads(content).get("rankings", [])
+
