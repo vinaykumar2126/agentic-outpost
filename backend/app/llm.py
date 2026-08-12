@@ -11,6 +11,7 @@ import re
 import time
 
 from groq import RateLimitError
+from langsmith import get_current_run_tree
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,16 @@ def groq_json_chat(client, *, model: str, messages: list[dict]) -> str:
                 temperature=0,
                 response_format={"type": "json_object"},
             )
+            if response.usage:
+                run = get_current_run_tree()
+                if run:
+                    run.set(
+                        usage_metadata={
+                            "input_tokens": response.usage.prompt_tokens,
+                            "output_tokens": response.usage.completion_tokens,
+                            "total_tokens": response.usage.total_tokens,
+                        }
+                    )
             return response.choices[0].message.content
         except RateLimitError as exc:
             if attempt == _MAX_RETRIES:

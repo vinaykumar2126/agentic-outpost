@@ -37,7 +37,7 @@ JUDGE_MODEL = os.environ.get("GROQ_JUDGE_MODEL", "llama-3.3-70b-versatile")
 
 # Gap between examples: one ranker call is ~700 tokens, so ~4 calls/min stays
 # well under llama-3.3's 6k TPM free-tier budget without relying on retries.
-_PAUSE_BETWEEN_EXAMPLES_S = 12.0
+_PAUSE_BETWEEN_EXAMPLES_S = 6
 
 
 # ── Target: dataset row → real ranker → gradeable dict ───────────────────────
@@ -174,6 +174,7 @@ def main() -> None:
     if args.smoke:
         examples = list(client.list_examples(dataset_name=DATASET_NAME, limit=3))
         data = examples
+    # print(data)
 
     model_slug = settings.groq_model.split("/")[-1]
     result = evaluate(

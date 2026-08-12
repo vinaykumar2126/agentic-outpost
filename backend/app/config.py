@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     gmail_user: str = ""
     gmail_app_password: str = ""
     groq_api_key: str = ""
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = ""
     database_url: str = "sqlite:///./events.db"
     scrape_days_ahead: int = 60
     log_level: str = "INFO"
