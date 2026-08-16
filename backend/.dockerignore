@@ -1,0 +1,49 @@
+# Build context = backend/. Everything listed here is kept OUT of the image.
+# Goal: ship only what the running process needs (app/ + requirements.txt).
+
+# --- Secrets & local data (NEVER ship these) ---
+.env
+.env.*
+*.db
+*.sqlite
+*.sqlite3
+
+# --- Local database & logs ---
+events.db
+logs/
+
+# --- Dev / test / eval only (not imported by app/) ---
+tests/
+evals/
+scripts/
+debug_aicamp.py
+requirements-dev.txt
+Makefile
+
+# --- Docs & context files (read by humans/AI, not the runtime) ---
+*.md
+COMMANDS.md
+
+# --- Python caches & artifacts ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# --- Agent scratch / audit output ---
+.agent/
+.agents/
+
+# --- Docker & VCS & editor ---
+Dockerfile
+.dockerignore
+.git/
+.gitignore
+.vscode/
+.idea/
