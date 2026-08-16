@@ -16,6 +16,16 @@ frontend/.env.local
 # Playwright MCP session artifacts
 backend/.playwright-mcp/
 
+# Backend runtime logs (not source)
+backend/logs/
+
+# Google Cloud SDK — installed via Homebrew, must never live in the repo
+google-cloud-sdk/
+google-cloud-cli-*.tar.gz
+# gcloud installer template leftovers
+{{pkgetc}}/
+{{etc}}/
+
 # Claude Code internals
 .claude/
 

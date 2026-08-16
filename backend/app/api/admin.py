@@ -1,9 +1,10 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app.models import ScrapeRun
 from app.schemas import HealthResponse, ScrapeRunSchema, TriggerResponse
@@ -23,8 +24,13 @@ def set_scheduler(scheduler):
 @router.post("/scrape/trigger", response_model=TriggerResponse)
 def trigger_scrape(
     source: Optional[str] = None,
+    x_trigger_secret: Optional[str] = Header(default=None),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
+    # When a secret is configured (cloud), Cloud Scheduler must present it. Unset = open (local dev).
+    if settings.scrape_trigger_secret and x_trigger_secret != settings.scrape_trigger_secret:
+        raise HTTPException(status_code=401, detail="invalid trigger secret")
+
     from app.scheduler.jobs import nightly_scrape_job
 
     sources = [source] if source else list(_get_active_source_names())

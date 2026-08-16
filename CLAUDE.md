@@ -49,7 +49,7 @@ npx playwright install chromium
 ```bash
 curl -X POST http://localhost:8000/api/admin/scrape/trigger
 curl http://localhost:8000/api/events?min_score=7&sort_by=score
-curl http://localhost:8000/api/health
+curl http://localhost:8000/api/admin/health
 ```
 
 ## Architecture

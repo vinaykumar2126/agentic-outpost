@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { getEvents } from "@/lib/api";
 import { EventCard } from "@/components/EventCard";
 import { FilterBar } from "@/components/FilterBar";
-import type { EventFilters } from "@/types/event";
+import type { EventFilters, EventListResponse } from "@/types/event";
 
 interface PageProps {
   searchParams: Promise<Record<string, string>>;
@@ -23,7 +23,7 @@ export default async function Home({ searchParams }: PageProps) {
     ...(sp.date_to && { date_to: sp.date_to }),
   };
 
-  let result = { events: [], total: 0, limit: 50, offset: 0 };
+  let result: EventListResponse = { events: [], total: 0, limit: 50, offset: 0 };
   let error = "";
 
   try {
