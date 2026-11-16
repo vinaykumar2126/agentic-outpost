@@ -132,9 +132,9 @@ RedditConnector.fetch_events()   [backend/app/connectors/reddit.py]
         │       <post>/.rss: megathread comments (full bodies, exact ISO timestamps)
         │       raw XML → .agent/scratch/reddit_raw/  (audit trail, never in LLM context)
         │
-        ├─► TRIM       trim_post(): code-level projection to {sub,title,body≤1500,url,created_utc,out_links}
+        ├─► TRIM       trim_post(): code-level projection to {sub,title,body,url,created_utc,out_links}
         │
-        ├─► EXTRACT    one Groq JSON call, recall-biased (no keyword gate; confidence field instead)
+        ├─► EXTRACT    one Gemini JSON call, recall-biased (no keyword gate; confidence field instead)
         │       created_utc passed per post → resolves "this Saturday" correctly
         │       → {name, date_iso, location, organizer, is_ai_relevant, confidence, source_url, post_url}
         │
@@ -174,22 +174,23 @@ The `UNIQUE(source, external_id)` constraint is the dedup key — the same event
 
 ---
 
-## 5. AI Relevance Ranking (Groq)
+## 5. AI Relevance Ranking (Gemini on Vertex AI)
 
 ```
 EventRanker.rank_unscored(db)   [backend/app/ranking/event_ranker.py]
         │
         ├─► SELECT * FROM events WHERE relevance_score IS NULL
         │
-        └─► Process in batches of 20:
+        └─► Process in batches of 50:
                 _rank_batch(batch)
                     │
                     ├─► Build JSON payload: [{external_id, title, description, organizer, tags}]
                     │
-                    ├─► Groq().chat.completions.create()
-                    │       model: llama-3.3-70b-versatile  (configured in .env)
-                    │       system prompt: scoring rubric (0–10 scale)
-                    │       response_format: {"type": "json_object"}  ← forces valid JSON output
+                    ├─► gemini_json_chat()  [backend/app/llm.py]
+                    │       model: gemini-3-flash-preview  (GEMINI_MODEL in .env)
+                    │       system_instruction: scoring rubric (0–10 scale)
+                    │       response_mime_type: application/json  ← forces valid JSON output
+                    │       retries 429/5xx with exponential backoff
                     │
                     └─► Parse response → [{external_id, score, justification}]
 
@@ -278,7 +279,7 @@ FilterBar.tsx  [frontend/components/FilterBar.tsx]  ← "use client"
 | Change what the card shows | `frontend/components/EventCard.tsx` |
 | Add a filter to the UI | `frontend/components/FilterBar.tsx` |
 | Swap SQLite → Postgres | `DATABASE_URL=postgresql://...` in `backend/.env` — no code changes |
-| Change Groq model | `GROQ_MODEL=<model>` in `backend/.env` |
+| Change Gemini model | `GEMINI_MODEL=<model>` in `backend/.env` |
 
 ---
 
@@ -290,7 +291,8 @@ backend/events.db     ← SQLite database (never committed)
 backend/.env.example  ← template showing all available variables
 ```
 
-Required env vars: `GROQ_API_KEY` (for ranking + Reddit event extraction). The Reddit connector needs no credentials (public RSS). Optional overrides:
-- `GROQ_MODEL` (default: `llama-3.3-70b-versatile`)
+Required env vars: `GOOGLE_CLOUD_PROJECT` (Vertex AI, for ranking + Reddit event extraction; auth via `gcloud auth application-default login`). The Reddit connector needs no credentials (public RSS). Optional overrides:
+- `GEMINI_MODEL` (default: `gemini-3-flash-preview`)
+- `GOOGLE_CLOUD_LOCATION` (default: `global`)
 - `DATABASE_URL` (default: `sqlite:///./events.db`)
 - `SCRAPE_DAYS_AHEAD` (default: `60`)

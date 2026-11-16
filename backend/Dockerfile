@@ -2,7 +2,7 @@
 #
 # This image is unusual: the Luma connector spawns `npx @playwright/mcp` (Node)
 # from Python and drives a real Chromium. So the image needs FOUR things baked in:
-#   1. Python   — the FastAPI app + Groq pipeline
+#   1. Python   — the FastAPI app + Gemini (Vertex AI) pipeline
 #   2. Node.js  — to run `npx @playwright/mcp`
 #   3. Chromium — the browser Playwright automates
 #   4. Chromium's OS libraries — installed via `playwright install --with-deps`

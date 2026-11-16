@@ -1,52 +1,62 @@
 import json
 from unittest.mock import MagicMock, patch
 
-import httpx
 import pytest
-from groq import RateLimitError
+from google.genai import errors
 
-from app.llm import chunk_by_chars, groq_json_chat
-
-
-def _rate_limit_error(msg="Rate limit reached. Please try again in 2.5s."):
-    resp = httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com/x"),
-                          json={"error": {"message": msg}})
-    return RateLimitError(msg, response=resp, body={"error": {"message": msg}})
+from app.llm import gemini_json_chat
 
 
-def test_chunk_by_chars_splits_and_keeps_all_items():
-    items = [{"body": "x" * 4000}, {"body": "y" * 4000}, {"body": "z" * 4000}]
-    batches = chunk_by_chars(items, char_budget=9000)
-    assert len(batches) == 2
-    assert sum(len(b) for b in batches) == 3
+def _api_error(code: int) -> errors.APIError:
+    status = {429: "RESOURCE_EXHAUSTED", 400: "INVALID_ARGUMENT"}.get(code, "UNAVAILABLE")
+    cls = errors.ClientError if code < 500 else errors.ServerError
+    return cls(code, {"error": {"code": code, "message": "boom", "status": status}})
 
 
-def test_chunk_by_chars_oversized_item_gets_own_batch():
-    items = [{"body": "x" * 20000}, {"body": "small"}]
-    batches = chunk_by_chars(items, char_budget=9000)
-    assert len(batches) == 2
-    assert len(batches[0]) == 1
+def _ok_response(payload: dict) -> MagicMock:
+    resp = MagicMock()
+    resp.text = json.dumps(payload)
+    resp.usage_metadata = None
+    return resp
 
 
-def test_groq_json_chat_retries_on_rate_limit_then_succeeds():
+def test_gemini_json_chat_retries_on_rate_limit_then_succeeds():
     client = MagicMock()
-    ok = MagicMock()
-    ok.choices[0].message.content = json.dumps({"ok": True})
-    client.chat.completions.create.side_effect = [_rate_limit_error(), ok]
+    client.models.generate_content.side_effect = [_api_error(429), _ok_response({"ok": True})]
 
     with patch("app.llm.time.sleep") as mock_sleep:
-        content = groq_json_chat(client, model="m", messages=[])
+        content = gemini_json_chat(client, model="m", system="s", user="u")
 
     assert json.loads(content) == {"ok": True}
-    assert client.chat.completions.create.call_count == 2
-    # Honors the wait Groq suggested (2.5s + 1s margin)
-    assert mock_sleep.call_args[0][0] == pytest.approx(3.5)
+    assert client.models.generate_content.call_count == 2
+    mock_sleep.assert_called_once()
 
 
-def test_groq_json_chat_raises_after_max_retries():
+def test_gemini_json_chat_requests_json_mode_with_system_prompt():
     client = MagicMock()
-    client.chat.completions.create.side_effect = _rate_limit_error()
+    client.models.generate_content.return_value = _ok_response({"ok": True})
+
+    gemini_json_chat(client, model="m", system="be a ranker", user="u")
+
+    config = client.models.generate_content.call_args.kwargs["config"]
+    assert config.response_mime_type == "application/json"
+    assert config.system_instruction == "be a ranker"
+
+
+def test_gemini_json_chat_raises_after_max_retries():
+    client = MagicMock()
+    client.models.generate_content.side_effect = _api_error(503)
     with patch("app.llm.time.sleep"):
-        with pytest.raises(RateLimitError):
-            groq_json_chat(client, model="m", messages=[])
-    assert client.chat.completions.create.call_count == 4  # initial + 3 retries
+        with pytest.raises(errors.ServerError):
+            gemini_json_chat(client, model="m", system="s", user="u")
+    assert client.models.generate_content.call_count == 5  # initial + 4 retries
+
+
+def test_gemini_json_chat_does_not_retry_client_errors():
+    client = MagicMock()
+    client.models.generate_content.side_effect = _api_error(400)
+    with patch("app.llm.time.sleep") as mock_sleep:
+        with pytest.raises(errors.ClientError):
+            gemini_json_chat(client, model="m", system="s", user="u")
+    assert client.models.generate_content.call_count == 1
+    mock_sleep.assert_not_called()

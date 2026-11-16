@@ -112,7 +112,7 @@ def test_extract_urls():
     assert urls == ["https://lu.ma/ai-demo-night", "https://partiful.com/e/xyz789"]
 
 
-def test_trim_post_caps_body_and_scans_html_for_links():
+def test_trim_post_keeps_full_body_and_scans_html_for_links():
     raw = {
         "subreddit": "bayarea",
         "title": "Demo night",
@@ -122,7 +122,7 @@ def test_trim_post_caps_body_and_scans_html_for_links():
         "created_utc": 1750000000.0,
     }
     t = trim_post(raw)
-    assert len(t["body"]) == 1500
+    assert len(t["body"]) == 5000  # no truncation: Gemini context has ample room
     # event link only present as an href in the HTML is still collected
     assert "https://partiful.com/e/abc" in t["out_links"]
     assert t["sub"] == "bayarea"
@@ -182,7 +182,8 @@ def test_registry_includes_reddit():
 
 def _extraction_response(events):
     mock_response = MagicMock()
-    mock_response.choices[0].message.content = json.dumps({"events": events})
+    mock_response.usage_metadata = None
+    mock_response.text = json.dumps({"events": events})
     return mock_response
 
 
@@ -207,7 +208,7 @@ def test_filter_and_resolve_drops_past_undated_and_irrelevant():
 
 @pytest.mark.asyncio
 async def test_fetch_events_end_to_end_mocked(db):
-    """Retrieval + Groq mocked; verifies trim -> extract -> dedup -> RawEvent flow."""
+    """Retrieval + Gemini mocked; verifies trim -> extract -> dedup -> RawEvent flow."""
     # Existing Luma event in DB — the cross-posted duplicate must be dropped
     db.add(Event(
         external_id="ai-demo-night", source="luma", title="AI Demo Night",
@@ -238,9 +239,9 @@ async def test_fetch_events_end_to_end_mocked(db):
 
     with patch.object(connector, "_retrieve_candidates", return_value=candidates), \
          patch.object(connector, "_scrape_luma_details", return_value={}), \
-         patch("app.connectors.reddit.Groq") as MockGroq, \
+         patch("app.connectors.reddit.get_client") as MockGemini, \
          patch("app.database.SessionLocal") as MockSession:
-        MockGroq.return_value.chat.completions.create.return_value = _extraction_response(llm_events)
+        MockGemini.return_value.models.generate_content.return_value = _extraction_response(llm_events)
         # _dedup_against_db opens its own session — point it at the test DB
         MockSession.return_value = db
         events = await connector.fetch_events()

@@ -15,7 +15,7 @@ A personal aggregator that nightly pulls AI/ML events across the Bay Area, score
 
 ## Stack
 
-- **Backend:** FastAPI (Python) · SQLAlchemy · SQLite (dev) / Cloud SQL (prod) · APScheduler · Groq SDK · mcp-playwright
+- **Backend:** FastAPI (Python) · SQLAlchemy · SQLite (dev) / Cloud SQL (prod) · APScheduler · Gemini on Vertex AI (google-genai) · mcp-playwright
 - **Frontend:** Next.js 16 (App Router, TypeScript) · React 19 · Tailwind CSS v4
 - **Deploy:** Backend → Google Cloud Run · Frontend → Vercel · Scraping runs **locally** (Mac LaunchAgent) and writes to the cloud DB
 
@@ -38,7 +38,7 @@ A personal aggregator that nightly pulls AI/ML events across the Bay Area, score
              upsert_events()  ──►  Database (SQLite / Cloud SQL)
                      │
                      ▼
-             EventRanker.rank_unscored()   # Groq JSON-mode, batches of 20
+             EventRanker.rank_unscored()   # Gemini JSON-mode, batches of 50
                      │  relevance_score 0–10
                      ▼
         FastAPI  GET /api/events  ──►  Next.js feed (SSR + URL-synced filters)
@@ -48,7 +48,7 @@ A personal aggregator that nightly pulls AI/ML events across the Bay Area, score
 
 1. **Collect** — each source's `EventConnector.fetch_events()` returns `RawEvent`s.
 2. **Store** — `upsert_events()` dedups by `UNIQUE(source, external_id)`. Events whose title/description changed since last rank have `relevance_score` reset to `NULL`.
-3. **Rank** — `EventRanker.rank_unscored()` sends unscored events (batches of 20) to Groq with JSON-mode structured output; scores 0–10.
+3. **Rank** — `EventRanker.rank_unscored()` sends unscored events (batches of 50) to Gemini on Vertex AI with JSON-mode structured output; scores 0–10.
 4. **Serve** — FastAPI exposes a read-mostly REST API.
 5. **Display** — Next.js server component fetches events (SSR) and renders a relevance-sorted, filterable list.
 
@@ -63,7 +63,7 @@ events_finder/
 │   │   ├── database.py        # SQLAlchemy engine/session
 │   │   ├── models.py          # Event, ScrapeRun ORM models
 │   │   ├── schemas.py         # Pydantic request/response models
-│   │   ├── llm.py             # Groq client wiring
+│   │   ├── llm.py             # Gemini (Vertex AI) client + JSON call helper
 │   │   ├── api/
 │   │   │   ├── events.py      # GET /api/events, GET /api/events/{id}
 │   │   │   └── admin.py       # POST /api/admin/scrape/trigger, /scrape/runs, /health
@@ -74,7 +74,7 @@ events_finder/
 │   │   │   ├── aicamp.py      # AICamp
 │   │   │   └── reddit.py      # public Reddit RSS/Atom feeds
 │   │   ├── ranking/
-│   │   │   └── event_ranker.py  # Groq JSON-mode scoring
+│   │   │   └── event_ranker.py  # Gemini JSON-mode scoring
 │   │   ├── scheduler/jobs.py  # nightly collect + rank job
 │   │   └── notifications/email.py
 │   ├── evals/                 # LangSmith evaluations
@@ -125,7 +125,7 @@ curl "https://events-backend-806237478519.us-central1.run.app/api/events?min_sco
 
 ## Ranking rubric
 
-Scored 0–10 by Groq (default model `llama-3.3-70b-versatile`):
+Scored 0–10 by Gemini (default model `gemini-3-flash-preview`):
 
 - **9–10** — Agentic AI workflows / multi-agent systems in production / AI engineering career events
 - **7–8** — LLM engineering, AI infrastructure, production deployment, agent frameworks
@@ -138,7 +138,7 @@ Scored 0–10 by Groq (default model `llama-3.3-70b-versatile`):
 
 ```bash
 cd backend
-cp .env.example .env          # fill in GROQ_API_KEY
+cp .env.example .env          # fill in GOOGLE_CLOUD_PROJECT
 pip install -r requirements.txt
 pip install -r requirements-dev.txt
 
@@ -160,7 +160,7 @@ npm run build && npm start    # production build
 ### Prerequisites
 
 ```bash
-# Groq API key (free tier): https://console.groq.com/keys → GROQ_API_KEY in backend/.env
+gcloud auth application-default login   # Vertex AI auth (no API key needed)
 npm install -g @playwright/mcp    # for the Luma connector
 npx playwright install chromium
 ```
@@ -171,8 +171,9 @@ npx playwright install chromium
 
 | Var                | Required | Default                      | Purpose                     |
 | ------------------ | -------- | ---------------------------- | --------------------------- |
-| `GROQ_API_KEY`     | ✅       | —                            | Groq inference key          |
-| `GROQ_MODEL`       |          | `llama-3.3-70b-versatile`    | Ranking model               |
+| `GOOGLE_CLOUD_PROJECT`  | ✅  | —                            | GCP project for Vertex AI   |
+| `GOOGLE_CLOUD_LOCATION` |     | `global`                     | Vertex AI location          |
+| `GEMINI_MODEL`     |          | `gemini-3-flash-preview`     | Ranking + extraction model  |
 | `DATABASE_URL`     |          | `sqlite:///./events.db`      | Swap to Postgres/Cloud SQL  |
 | `SCRAPE_DAYS_AHEAD`|          | `60`                         | Look-ahead window           |
 | `LOG_LEVEL`        |          | `INFO`                       | Logging verbosity           |

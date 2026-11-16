@@ -4,13 +4,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    # extra="ignore": stale keys left in .env (e.g. old GROQ_*) shouldn't crash startup
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     eventbrite_api_key: str = ""
     gmail_user: str = ""
     gmail_app_password: str = ""
-    groq_api_key: str = ""
-    groq_model: str = ""
+    # Gemini on Vertex AI — auth via Application Default Credentials, no API key
+    google_cloud_project: str = ""
+    google_cloud_location: str = "global"  # Gemini 3 preview models are served from "global"
+    gemini_model: str = "gemini-3-flash-preview"
+    gemini_thinking_level: str = "low"
     database_url: str = "sqlite:///./events.db"
     scrape_days_ahead: int = 60
     log_level: str = "INFO"

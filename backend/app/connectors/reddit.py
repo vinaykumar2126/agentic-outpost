@@ -15,7 +15,7 @@ Pipeline (token-disciplined, deep-agents style):
                  sort=new/t=week) + "events/what's happening" megathread comments.
                  Raw XML is saved to .agent/scratch/reddit_raw/, never in LLM context.
   2. TRIM      — trim_post() projects each candidate to a minimal dict in code.
-  3. EXTRACT   — one recall-biased Groq JSON pass over the trimmed survivors.
+  3. EXTRACT   — one recall-biased Gemini JSON pass over the trimmed survivors.
   4. ENRICH    — lu.ma out-links are re-scraped with the existing Playwright
                  connector for structured details instead of parsing prose.
   5. DEDUP     — against events already in the DB (cross-posted Luma/AIcamp events)
@@ -26,7 +26,6 @@ import asyncio
 import json
 import logging
 import re
-import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -36,13 +35,12 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup
-from groq import Groq
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from app.config import settings
 from app.connectors.base import EventConnector, RawEvent
-from app.llm import chunk_by_chars, groq_json_chat
+from app.llm import gemini_json_chat, get_client
 
 logger = logging.getLogger(__name__)
 
@@ -91,12 +89,6 @@ _POST_LINK_RE = re.compile(r"reddit\.com(/r/([^/]+)/comments/([a-z0-9]+)/[^\s\"]
 _MAX_CANDIDATES = 30       # cap on posts that reach the LLM
 _MAX_MEGATHREADS = 4
 _MAX_COMMENT_CANDIDATES = 20
-_BODY_CAP = 1500           # per-post body cap before the LLM sees it
-
-# Groq free tier is TPM-limited (6k/min for llama-3.3-70b). ~9k chars ≈ 2.5k tokens
-# per call keeps each request well under budget; the gap spreads calls across minutes.
-_EXTRACT_CHAR_BUDGET = 9000
-_LLM_CALL_GAP_S = 25.0
 
 # Raw feed XML goes here for audit — never into LLM context
 RAW_DUMP_DIR = Path(__file__).resolve().parents[3] / ".agent" / "scratch" / "reddit_raw"
@@ -128,7 +120,7 @@ def html_to_text(html: str) -> str:
 
 
 def trim_post(raw: dict) -> dict:
-    """Project a fat post dict to the minimal shape the LLM sees (~5-10x token cut).
+    """Project a fat post dict to the fields the LLM needs (drops feed metadata noise).
 
     URL scan covers content_html too: for link posts the outbound event URL only
     exists as an href attribute, which plain-text stripping would discard.
@@ -140,7 +132,7 @@ def trim_post(raw: dict) -> dict:
     return {
         "sub": raw.get("subreddit", ""),
         "title": raw.get("title", ""),
-        "body": body[:_BODY_CAP],
+        "body": body,
         "url": raw.get("url", ""),
         "created_utc": raw.get("created_utc"),
         "out_links": extract_urls(url_haystack),
@@ -408,32 +400,25 @@ class RedditConnector(EventConnector):
                 "links_in_post": t["out_links"],
             })
 
-        client = Groq(api_key=settings.groq_api_key)
+        client = get_client()
         today = datetime.now(PACIFIC).strftime("%A %Y-%m-%d")
-        events: List[dict] = []
-        # Chunked so each request stays far below Groq's TPM budget
-        batches = chunk_by_chars(payload, _EXTRACT_CHAR_BUDGET)
-        for i, batch in enumerate(batches):
-            if i:
-                time.sleep(_LLM_CALL_GAP_S)
-            user_prompt = (
-                f"Today is {today}. "
-                f"Extract events from these {len(batch)} Reddit posts.\n\n"
-                f"{json.dumps(batch, indent=1)}"
+        # Single call: <= ~50 posts with full bodies is a tiny fraction of Gemini's 1M context
+        user_prompt = (
+            f"Today is {today}. "
+            f"Extract events from these {len(payload)} Reddit posts.\n\n"
+            f"{json.dumps(payload, indent=1)}"
+        )
+        try:
+            content = gemini_json_chat(
+                client,
+                model=settings.gemini_model,
+                system=EXTRACTION_SYSTEM_PROMPT,
+                user=user_prompt,
             )
-            try:
-                content = groq_json_chat(
-                    client,
-                    model=settings.groq_model,
-                    messages=[
-                        {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                )
-                events += json.loads(content).get("events", [])
-            except Exception as exc:
-                logger.error("Extraction batch %d/%d failed: %s", i + 1, len(batches), exc)
-        return events
+            return json.loads(content).get("events", [])
+        except Exception as exc:
+            logger.error("Extraction call failed: %s", exc)
+            return []
 
     # ── Stages 4-5: resolve, dedup, enrich, assemble ─────────────────────────
 

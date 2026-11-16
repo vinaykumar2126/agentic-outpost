@@ -1,22 +1,19 @@
 import json
 import logging
-import time
 from datetime import datetime, timezone
 
-from groq import Groq
 from langsmith import traceable
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.llm import groq_json_chat
+from app.llm import gemini_json_chat, get_client
 from app.models import Event
 
 logger = logging.getLogger(__name__)
 
-# Keeps each prompt within the model's practical context limit while minimizing round-trips
-BATCH_SIZE = 20
-# Spread batches out so consecutive calls don't blow Groq's free-tier TPM budget
-_INTER_BATCH_GAP_S = 20.0
+# Not a context limit (Gemini has 1M tokens) — it bounds the JSON reply so the model
+# doesn't skip/merge items in a very long list, and caps what one failed call loses.
+BATCH_SIZE = 50
 
 SYSTEM_PROMPT = """You are an AI event relevance ranker. You help an early-career software engineer
 targeting AI Engineer roles discover the most valuable Bay Area AI events for networking and career growth.
@@ -41,10 +38,8 @@ No explanation, no markdown fences."""
 
 class EventRanker:
     def __init__(self):
-        # wrap_openai can't be used here — it also patches the legacy .completions
-        # endpoint, which the Groq client doesn't expose. The @traceable decorators
-        # below capture the calls instead (see _rank_batch).
-        self.client = Groq(api_key=settings.groq_api_key)
+        # The @traceable decorators below capture calls + token usage for LangSmith
+        self.client = get_client()
 
     @traceable(name="rank_unscored")
     def rank_unscored(self, db: Session) -> int:
@@ -57,8 +52,6 @@ class EventRanker:
         ranked_count = 0
         for i in range(0, len(unscored), BATCH_SIZE):
             batch = unscored[i : i + BATCH_SIZE]
-            if i:
-                time.sleep(_INTER_BATCH_GAP_S)
             try:
                 results = self._rank_batch(batch)
                 for item in results:
@@ -87,7 +80,7 @@ class EventRanker:
             {
                 "external_id": e.external_id,
                 "title": e.title,
-                "description": (e.short_description or "")[:400],
+                "description": e.short_description or "",
                 "organizer": e.organizer_name or "",
                 "tags": json.loads(e.tags) if e.tags else [],
             }
@@ -101,14 +94,12 @@ class EventRanker:
             f"Events:\n{json.dumps(payload, indent=2)}"
         )
 
-        # groq_json_chat enforces JSON output and retries TPM 429s with Groq's suggested wait
-        content = groq_json_chat(
+        # gemini_json_chat enforces JSON output and retries 429/5xx with backoff
+        content = gemini_json_chat(
             self.client,
-            model=settings.groq_model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
+            model=settings.gemini_model,
+            system=SYSTEM_PROMPT,
+            user=user_prompt,
         )
         return json.loads(content).get("rankings", [])
 

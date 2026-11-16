@@ -1,4 +1,4 @@
-"""Live end-to-end test for the Reddit connector (public RSS — needs GROQ_API_KEY only).
+"""Live end-to-end test for the Reddit connector (public RSS — needs Vertex AI credentials only).
 
 Usage:  cd backend && python3 scripts/reddit_live_e2e.py [--dry-run]
 
