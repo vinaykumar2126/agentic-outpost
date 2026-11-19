@@ -5,6 +5,7 @@ import re
 import subprocess
 from datetime import datetime, timedelta, timezone
 from typing import List
+from zoneinfo import ZoneInfo
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -15,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 LUMA_BASE = "https://lu.ma"
 LUMA_DISCOVER_URL = "https://lu.ma/sf"
+# Snapshot dates/times are rendered in the event's local (Bay Area) time, not UTC
+PACIFIC = ZoneInfo("America/Los_Angeles")
 
 # Luma nav and utility paths that appear in snapshot URL lists but are never event pages
 _NON_EVENT_SLUGS = {
@@ -225,12 +228,14 @@ class LumaConnector(EventConnector):
         if not time_m:
             return None
         try:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(PACIFIC).replace(tzinfo=None)
             year = now.year
-            dt = datetime.strptime(f"{date_m.group(1)} {year} {time_m.group(1)}", "%B %d %Y %I:%M %p")
-            if dt < now.replace(tzinfo=None) - timedelta(days=14):
-                dt = dt.replace(year=year + 1)
-            return dt
+            local = datetime.strptime(f"{date_m.group(1)} {year} {time_m.group(1)}", "%B %d %Y %I:%M %p")
+            if local < now - timedelta(days=14):
+                local = local.replace(year=year + 1)
+            # RawEvent.start_datetime is naive UTC; treating Pacific wall-clock as UTC put
+            # snapshot-parsed events 7–8 hours early
+            return local.replace(tzinfo=PACIFIC).astimezone(timezone.utc).replace(tzinfo=None)
         except ValueError:
             return None
 

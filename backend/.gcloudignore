@@ -1,0 +1,11 @@
+# Files `gcloud builds submit` / `gcloud run deploy --source` upload to Cloud Build.
+# Allow-list: upload ONLY what the Dockerfile needs. Without this file gcloud
+# would upload everything here — including .env with live secrets.
+*
+!Dockerfile
+!.dockerignore
+!requirements.txt
+!app/
+!app/**
+**/__pycache__/
+**/*.py[cod]

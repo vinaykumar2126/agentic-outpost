@@ -1,3 +1,9 @@
+import os
+
+# Must run before app imports: app.config exports LANGSMITH_* from .env into os.environ,
+# which made every test run post traces to LangSmith. Tests should never touch the network.
+os.environ["LANGSMITH_TRACING"] = "false"
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine

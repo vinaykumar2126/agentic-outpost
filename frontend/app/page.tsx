@@ -29,7 +29,7 @@ export default async function Home({ searchParams }: PageProps) {
   try {
     result = await getEvents(filters);
   } catch {
-    error = "Could not connect to the backend. Is it running on port 8000?";
+    error = "Couldn't load events right now. Please try again in a moment.";
   }
 
   return (
@@ -54,7 +54,7 @@ export default async function Home({ searchParams }: PageProps) {
       <div className="mt-4 flex flex-col gap-4">
         {result.events.length === 0 && !error && (
           <p className="text-center text-gray-400 py-12">
-            No events found. Try running <code className="bg-gray-100 px-1 rounded">make scrape</code> in the backend.
+            No events match these filters. Try lowering the minimum score or clearing the search.
           </p>
         )}
         {result.events.map((event) => (

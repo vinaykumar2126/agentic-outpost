@@ -1,7 +1,10 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
+
+// Wait for a typing pause before searching, so each keystroke isn't a server render + API call
+const SEARCH_DEBOUNCE_MS = 400;
 
 export function FilterBar() {
   const router = useRouter();
@@ -26,6 +29,16 @@ export function FilterBar() {
   const isFree = params.get("is_free") ?? "";
   const q = params.get("q") ?? "";
 
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+  }, []);
+
+  const onSearchChange = (value: string) => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => update("q", value.trim()), SEARCH_DEBOUNCE_MS);
+  };
+
   return (
     <div className="flex flex-wrap items-center gap-3 py-4 px-1">
       {/* Search */}
@@ -33,7 +46,7 @@ export function FilterBar() {
         type="text"
         placeholder="Search events..."
         defaultValue={q}
-        onChange={(e) => update("q", e.target.value)}
+        onChange={(e) => onSearchChange(e.target.value)}
         className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-52 focus:outline-none focus:ring-2 focus:ring-blue-400"
       />
 

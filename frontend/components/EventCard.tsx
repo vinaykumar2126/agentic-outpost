@@ -47,7 +47,7 @@ export function EventCard({ event }: EventCardProps) {
       )}
 
       {event.relevance_justification && (
-        <p className="text-xs text-emerald-700 italic">"{event.relevance_justification}"</p>
+        <p className="text-xs text-emerald-700 italic">&ldquo;{event.relevance_justification}&rdquo;</p>
       )}
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">

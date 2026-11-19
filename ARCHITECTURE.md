@@ -1,6 +1,6 @@
 # Events Finder: Architecture Map
 
-> **Updated 2026-11-15.** Read top to bottom: big picture → nightly job → one source in depth → AI scoring → website → security.
+> **Updated 2026-11-17.** Read top to bottom: big picture → nightly job → one source in depth → AI scoring → website → security.
 
 **In one line:** every night my Mac collects Bay Area AI events from Luma, AICamp and Reddit. Gemini scores each one 0–10 for how useful it is to an AI engineer, and a website shows the best ones first.
 
@@ -17,7 +17,7 @@ flowchart LR
     end
 
     subgraph MAC["💻 My Mac (home IP)"]
-        LA["⏰ LaunchAgent<br/>every 2h + on wake"]
+        LA["⏰ LaunchAgent<br/>checks every 15 min"]
         JOB["🐍 Nightly job<br/>scrape → score → email"]
         LA --> JOB
     end
@@ -79,7 +79,7 @@ sequenceDiagram
     participant AI as 🤖 Gemini
     participant GM as 📧 Gmail
 
-    LA->>SH: fire (on wake + every 2h)
+    LA->>SH: fire (every 15 min while awake)
     SH->>SH: skip if lid closed or already ran today
     SH->>PX: start proxy on :5433 (local-scraper key)
     SH->>JOB: python, with DATABASE_URL + GOOGLE_APPLICATION_CREDENTIALS
@@ -99,7 +99,8 @@ sequenceDiagram
 - **Upsert, not insert.** The same event seen again gets *updated*. If its title or description changed, its score is reset to `NULL` so it's re-scored.
 - **Only unscored events go to Gemini**, so most nights cost almost nothing.
 - **One failing source doesn't stop the others.** Each source has its own `ScrapeRun` row with status `success`/`failed`.
-- **Why "on wake + every 2h" and not 2am:** with the laptop lid closed the Mac sleeps mid-run and the database connection dies. Now it runs once a day, whenever the lid is open.
+- **Why "every 15 min" and not 2am:** with the laptop lid closed the Mac sleeps mid-run and the database connection dies. Now it runs once a day, whenever the lid is open. The wrapper skips cheaply if the lid is closed or today already succeeded.
+- **Why 15 min and not 2h:** launchd's `StartInterval` timer only counts *awake* time and does not fire on wake. With a 2h interval, the first run after opening the lid could be hours away (it missed the morning of 2026-11-17). `RunAtLoad` only fires at login/reload.
 
 ---
 
@@ -175,7 +176,7 @@ flowchart LR
 
 - **One door to the LLM:** the ranker, the Reddit extractor and the evals all call `gemini_json_chat()`. Switching providers (Groq → Gemini, Nov 2026) meant changing that one file.
 - **Evals:** `backend/evals/eval_ranker.py` runs the real ranker on a hand-labeled golden dataset in **LangSmith**. Checks: score inside the expected band, how far off it was, justification format, and an **LLM-as-judge** (`gemini-3.1-pro-preview`) that checks the justification is grounded in the event text.
-- Note: the ranker reads `short_description`, which `upsert_events` cuts to **400 characters**.
+- The ranker sends the **full description** (`short_description` is only a 400-char display snippet) and only scores **upcoming** events, so past or repeatedly-skipped events aren't re-sent every night.
 
 ---
 

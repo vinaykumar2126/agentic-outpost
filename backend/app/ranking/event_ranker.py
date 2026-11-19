@@ -43,8 +43,15 @@ class EventRanker:
 
     @traceable(name="rank_unscored")
     def rank_unscored(self, db: Session) -> int:
-        """Score all events with relevance_score IS NULL. Returns number of events ranked."""
-        unscored = db.query(Event).filter(Event.relevance_score.is_(None)).all()
+        """Score upcoming events with relevance_score IS NULL. Returns number of events ranked."""
+        # Upcoming only: past events never show in the feed, so scoring them is wasted spend
+        # (and without this filter an event the model keeps skipping is re-sent forever).
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        unscored = (
+            db.query(Event)
+            .filter(Event.relevance_score.is_(None), Event.start_datetime >= now)
+            .all()
+        )
         if not unscored:
             logger.info("No unscored events found")
             return 0
@@ -80,7 +87,9 @@ class EventRanker:
             {
                 "external_id": e.external_id,
                 "title": e.title,
-                "description": e.short_description or "",
+                # Full description: short_description is a 400-char display snippet and
+                # cuts off agenda/speaker details the rubric depends on.
+                "description": e.description or e.short_description or "",
                 "organizer": e.organizer_name or "",
                 "tags": json.loads(e.tags) if e.tags else [],
             }
