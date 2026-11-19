@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_tables()
-    # In cloud, Cloud Scheduler drives the nightly job via /api/admin/scrape/trigger, so the
-    # embedded scheduler is disabled to avoid a redundant fire if an instance is warm at 2am.
+    # On Cloud Run the embedded scheduler is disabled (DISABLE_SCHEDULER=true): the cloud is
+    # serve-only. Scraping runs on the Mac via a LaunchAgent, since Luma/Reddit block cloud IPs.
     scheduler = None
     if not settings.disable_scheduler:
         scheduler = create_scheduler()
@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
         admin.set_scheduler(scheduler)
         logger.info("Scheduler started. Next run: %s", scheduler.get_job("nightly_scrape").next_run_time)
     else:
-        logger.info("Embedded scheduler disabled (DISABLE_SCHEDULER=true); Cloud Scheduler drives the job")
+        logger.info("Embedded scheduler disabled (DISABLE_SCHEDULER=true); serve-only mode")
     yield
     if scheduler:
         scheduler.shutdown()

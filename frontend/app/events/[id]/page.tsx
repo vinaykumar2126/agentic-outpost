@@ -58,7 +58,7 @@ export default async function EventPage({ params }: Props) {
           <ScoreBar score={event.relevance_score} />
           {event.relevance_justification && (
             <p className="text-sm text-emerald-700 italic mt-1">
-              "{event.relevance_justification}"
+              &ldquo;{event.relevance_justification}&rdquo;
             </p>
           )}
         </div>

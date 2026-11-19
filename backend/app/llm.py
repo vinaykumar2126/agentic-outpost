@@ -1,70 +1,77 @@
-"""Shared Groq call helper with rate-limit awareness.
+"""Shared Gemini (Vertex AI) call helper.
 
-Groq's free tier enforces tokens-per-minute (TPM) per model. Two rules keep us
-inside it: (1) callers chunk their payloads so no single request approaches the
-budget, and (2) this helper retries 429s, honoring the wait Groq suggests in the
-error message ("Please try again in 7.66s") instead of guessing.
+All LLM calls go through gemini_json_chat: JSON-mode output, LangSmith token
+accounting, and retry with exponential backoff on 429 / transient 5xx. Preview
+models on Vertex (e.g. gemini-3-flash-preview) share dynamic quota, so short
+bursts of "RESOURCE_EXHAUSTED" are expected and safe to retry.
 """
 
 import logging
-import re
 import time
 
-from groq import RateLimitError
+from google import genai
+from google.genai import errors, types
 from langsmith import get_current_run_tree
+
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_MAX_RETRIES = 3
+_MAX_RETRIES = 4
+_RETRYABLE_CODES = {429, 500, 503}
+_BASE_BACKOFF_S = 5.0
 
 
-def groq_json_chat(client, *, model: str, messages: list[dict]) -> str:
-    """One JSON-mode chat call with TPM-aware retry. Returns the raw content string."""
+def get_client() -> genai.Client:
+    """Vertex AI client. Auth comes from Application Default Credentials
+    (`gcloud auth application-default login` locally, the service account on Cloud Run)."""
+    return genai.Client(
+        vertexai=True,
+        project=settings.google_cloud_project or None,
+        location=settings.google_cloud_location,
+    )
+
+
+def gemini_json_chat(client: genai.Client, *, model: str, system: str, user: str) -> str:
+    """One JSON-mode generate call with retry. Returns the raw JSON text."""
+    config = types.GenerateContentConfig(
+        system_instruction=system,
+        response_mime_type="application/json",
+        # Gemini 3: Google recommends leaving temperature at its default (1.0);
+        # low thinking keeps scoring/extraction fast and cheap.
+        thinking_config=types.ThinkingConfig(thinking_level=settings.gemini_thinking_level),
+    )
     for attempt in range(_MAX_RETRIES + 1):
         try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0,
-                response_format={"type": "json_object"},
-            )
-            if response.usage:
+            response = client.models.generate_content(model=model, contents=user, config=config)
+            usage = response.usage_metadata
+            if usage:
                 run = get_current_run_tree()
                 if run:
                     run.set(
                         usage_metadata={
-                            "input_tokens": response.usage.prompt_tokens,
-                            "output_tokens": response.usage.completion_tokens,
-                            "total_tokens": response.usage.total_tokens,
+                            "input_tokens": usage.prompt_token_count or 0,
+                            "output_tokens": (usage.candidates_token_count or 0)
+                            + (usage.thoughts_token_count or 0),
+                            "total_tokens": usage.total_token_count or 0,
                         }
                     )
-            return response.choices[0].message.content
-        except RateLimitError as exc:
-            if attempt == _MAX_RETRIES:
+            if not response.text:
+                raise ValueError(f"empty response (finish_reason={_finish_reason(response)})")
+            return response.text
+        except errors.APIError as exc:
+            if exc.code not in _RETRYABLE_CODES or attempt == _MAX_RETRIES:
                 raise
-            # Groq embeds the exact wait in the message; fall back to linear backoff
-            m = re.search(r"try again in ([\d.]+)s", str(exc), re.IGNORECASE)
-            wait = float(m.group(1)) + 1.0 if m else 20.0 * (attempt + 1)
-            logger.info("Groq rate limit hit — sleeping %.1fs (attempt %d/%d)",
-                        wait, attempt + 1, _MAX_RETRIES)
+            wait = _BASE_BACKOFF_S * (2**attempt)
+            logger.info("Gemini %s — sleeping %.0fs (attempt %d/%d)",
+                        exc.code, wait, attempt + 1, _MAX_RETRIES)
             time.sleep(wait)
     raise RuntimeError("unreachable")
 
 
-def chunk_by_chars(items: list[dict], char_budget: int) -> list[list[dict]]:
-    """Split items into batches whose serialized size stays under char_budget.
-    A single oversized item still gets its own batch rather than being dropped."""
-    batches: list[list[dict]] = []
-    current: list[dict] = []
-    size = 0
-    for item in items:
-        item_size = len(str(item))
-        if current and size + item_size > char_budget:
-            batches.append(current)
-            current = []
-            size = 0
-        current.append(item)
-        size += item_size
-    if current:
-        batches.append(current)
-    return batches
+def _finish_reason(response) -> str:
+    try:
+        return str(response.candidates[0].finish_reason)
+    except (AttributeError, IndexError, TypeError):
+        return "unknown"
+

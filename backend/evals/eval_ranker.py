@@ -9,35 +9,28 @@ Design notes (the parts interviewers ask about):
     prompt, model, and JSON plumbing. Never eval a copy of the prompt.
   * References are score BANDS, not exact scores (see golden_dataset.py).
   * Two deterministic evaluators (free, instant) + one LLM-as-judge for the fuzzy
-    part. The judge runs on a DIFFERENT model family than the ranker to reduce
-    self-preference bias — and on Groq's free tier each model has its own TPM
-    bucket, so judge calls don't starve ranker calls.
-  * max_concurrency=1 + a small pause keeps the whole run inside free-tier TPM;
-    groq_json_chat retries any 429 with Groq's suggested wait.
+    part. The judge runs on a DIFFERENT, stronger model than the ranker
+    (gemini-3.1-pro-preview vs gemini-3-flash-preview) to reduce self-preference bias.
+    Same vendor, so some bias remains — override with GEMINI_JUDGE_MODEL.
+  * gemini_json_chat retries any 429/5xx with exponential backoff.
 """
 
 import argparse
 import json
 import os
-import time
 
-from groq import Groq
 from langsmith import Client, evaluate
 
 from app.config import settings
-from app.llm import groq_json_chat
+from app.llm import gemini_json_chat, get_client
 from app.models import Event
 from app.ranking.event_ranker import EventRanker
 from evals.golden_dataset import GOLDEN_EXAMPLES
 
 DATASET_NAME = "event-ranker-golden"
-# Judge on a different model family than the ranker (see settings.groq_model)
-# to reduce self-preference bias; separate model = separate free-tier TPM bucket.
-JUDGE_MODEL = os.environ.get("GROQ_JUDGE_MODEL", "llama-3.3-70b-versatile")
-
-# Gap between examples: one ranker call is ~700 tokens, so ~4 calls/min stays
-# well under llama-3.3's 6k TPM free-tier budget without relying on retries.
-_PAUSE_BETWEEN_EXAMPLES_S = 6
+# Judge on a different model than the ranker (see settings.gemini_model)
+# to reduce self-preference bias.
+JUDGE_MODEL = os.environ.get("GEMINI_JUDGE_MODEL", "gemini-3.1-pro-preview")
 
 
 # ── Target: dataset row → real ranker → gradeable dict ───────────────────────
@@ -54,7 +47,6 @@ def make_event(title: str, description: str = "", organizer: str = "") -> Event:
 
 
 def target(inputs: dict) -> dict:
-    time.sleep(_PAUSE_BETWEEN_EXAMPLES_S)
     event = make_event(**inputs)
     results = EventRanker()._rank_batch([event])
     if not results:
@@ -114,7 +106,7 @@ def justification_grounded(inputs: dict, outputs: dict) -> dict:
     if not justification:
         return {"key": "justification_grounded", "score": 0, "comment": "empty justification"}
 
-    client = Groq(api_key=settings.groq_api_key)
+    client = get_client()
     user_prompt = json.dumps(
         {
             "event": inputs,
@@ -124,13 +116,11 @@ def justification_grounded(inputs: dict, outputs: dict) -> dict:
         indent=1,
     )
     try:
-        content = groq_json_chat(
+        content = gemini_json_chat(
             client,
             model=JUDGE_MODEL,
-            messages=[
-                {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
+            system=JUDGE_SYSTEM_PROMPT,
+            user=user_prompt,
         )
         verdict = json.loads(content)
         return {
@@ -176,14 +166,14 @@ def main() -> None:
         data = examples
     # print(data)
 
-    model_slug = settings.groq_model.split("/")[-1]
+    model_slug = settings.gemini_model.split("/")[-1]
     result = evaluate(
         target,
         data=data,
         evaluators=[score_in_band, band_distance, justification_format, justification_grounded],
         experiment_prefix=f"ranker-{model_slug}",
-        max_concurrency=1,  # serial: keeps Groq free-tier TPM happy
-        metadata={"ranker_model": settings.groq_model, "judge_model": JUDGE_MODEL},
+        max_concurrency=4,
+        metadata={"ranker_model": settings.gemini_model, "judge_model": JUDGE_MODEL},
     )
     print(f"\nExperiment: {result.experiment_name}")
 
